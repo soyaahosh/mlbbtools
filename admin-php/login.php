@@ -343,10 +343,8 @@ $loginError = $loginError ?? '';
         const verifyData = await verifyRes.json();
 
         if (verifyData.success) {
-          showAlert("✓ Passkey Verified! Welcome Administrator.", true);
-          setTimeout(() => {
-            window.location.href = "index.php";
-          }, 350);
+          window.location.href = "index.php";
+          return;
         } else {
           throw new Error(verifyData.message || "Passkey verification failed.");
         }
