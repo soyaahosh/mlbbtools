@@ -60,57 +60,52 @@ function saveAppConfig($newConfig) {
  * Check if the current user/request is authenticated as admin
  */
 function isAdminAuthenticated() {
-    $cfg = getAppConfig();
-    $adminPin = (string)($cfg['admin_pin'] ?? '123456');
-
     // 1. Check active PHP session
     if (!empty($_SESSION['admin_authenticated']) && $_SESSION['admin_authenticated'] === true) {
         return true;
     }
 
-    // 2. Check 30-day Remember-Me Cookie (HMAC signature)
+    // 2. Check 30-day Remember-Me Cookie (Passkey token)
     if (!empty($_COOKIE['ketupat_admin_passkey_token'])) {
         $cookieToken = $_COOKIE['ketupat_admin_passkey_token'];
-        $expectedToken = hash_hmac('sha256', 'ketupat_auth_' . $adminPin, $adminPin . '_salt_998');
+        $cfg = getAppConfig();
+        $secretSalt = ($cfg['supabase_secret_key'] ?? '') . '_passkey_salt_998';
+        $expectedToken = hash_hmac('sha256', 'ketupat_webauthn_auth', $secretSalt);
         if (hash_equals($expectedToken, $cookieToken)) {
             $_SESSION['admin_authenticated'] = true;
             return true;
         }
     }
 
-    // 3. Check custom header (useful for API testing or mobile clients)
-    $headerPin = $_SERVER['HTTP_X_ADMIN_PASSKEY'] ?? $_SERVER['HTTP_X_ADMIN_PIN'] ?? '';
-    if (!empty($headerPin) && hash_equals($adminPin, (string)$headerPin)) {
-        return true;
-    }
-
     return false;
 }
 
 /**
- * Perform login using passkey/PIN
+ * Establish authenticated admin session after FIDO2 Passkey verification
+ */
+function loginAdminWithPasskey($remember = true) {
+    $_SESSION['admin_authenticated'] = true;
+    $_SESSION['admin_login_time'] = time();
+
+    if ($remember) {
+        $cfg = getAppConfig();
+        $secretSalt = ($cfg['supabase_secret_key'] ?? '') . '_passkey_salt_998';
+        $token = hash_hmac('sha256', 'ketupat_webauthn_auth', $secretSalt);
+        @setcookie('ketupat_admin_passkey_token', $token, [
+            'expires' => time() + (86400 * 30), // 30 days
+            'path' => '/',
+            'httponly' => true,
+            'samesite' => 'Lax',
+            'secure' => isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'
+        ]);
+    }
+    return true;
+}
+
+/**
+ * Legacy PIN login (permanently disabled)
  */
 function loginAdmin($passkey, $remember = true) {
-    $cfg = getAppConfig();
-    $expectedPin = (string)($cfg['admin_pin'] ?? '123456');
-    $passkey = trim((string)$passkey);
-
-    if ($passkey !== '' && hash_equals($expectedPin, $passkey)) {
-        $_SESSION['admin_authenticated'] = true;
-        $_SESSION['admin_login_time'] = time();
-
-        if ($remember) {
-            $token = hash_hmac('sha256', 'ketupat_auth_' . $expectedPin, $expectedPin . '_salt_998');
-            @setcookie('ketupat_admin_passkey_token', $token, [
-                'expires' => time() + (86400 * 30), // 30 days
-                'path' => '/',
-                'httponly' => true,
-                'samesite' => 'Lax',
-                'secure' => isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'
-            ]);
-        }
-        return true;
-    }
     return false;
 }
 

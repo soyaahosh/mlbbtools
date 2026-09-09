@@ -8,9 +8,13 @@ if (!defined('CONFIG_FILE')) {
 }
 require_once __DIR__ . '/webauthn.php';
 
+// If already logged in, redirect directly into the Command Center
+if (isAdminAuthenticated()) {
+    header('Location: index.php');
+    exit;
+}
+
 $loginError = $loginError ?? '';
-$registeredPasskeys = WebAuthnEngine::getPasskeys();
-$hasPasskeys = !empty($registeredPasskeys);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -388,7 +392,7 @@ $hasPasskeys = !empty($registeredPasskeys);
     <!-- PRIMARY ACTION: Sign in with Passkey -->
     <button type="button" class="btn-passkey-primary" id="btnSignInPasskey">
       <div class="passkey-icon-box">
-        <span class="material-symbols-outlined">key</span>
+        <span class="material-symbols-outlined">fingerprint</span>
       </div>
       <div class="passkey-text-wrap">
         <span class="passkey-btn-title">Sign in with Passkey</span>
@@ -397,45 +401,9 @@ $hasPasskeys = !empty($registeredPasskeys);
       <span class="material-symbols-outlined" style="font-size: 20px;">arrow_forward</span>
     </button>
 
-    <!-- SETUP PASSKEY CARD (If no passkey or adding new device) -->
-    <div class="register-passkey-box" id="boxRegisterPasskey">
-      <div class="register-text">
-        <strong>Create / Add Passkey</strong>
-        <span>Save to your Google Account or device</span>
-      </div>
-      <button type="button" class="btn-setup-passkey" id="btnRegisterNewPasskey">
-        <span class="material-symbols-outlined" style="font-size: 16px;">add_circle</span>
-        <span>Register Passkey</span>
-      </button>
+    <div style="font-size: 12px; color: #94a3b8; text-align: center; margin-top: 18px; line-height: 1.5;">
+      Touch your fingerprint sensor, use Face ID, or Windows Hello to verify administrator identity.
     </div>
-
-    <div class="divider">or emergency master PIN</div>
-
-    <!-- FALLBACK: Master Admin PIN Form -->
-    <form method="POST" action="index.php" id="formPinLogin">
-      <input type="hidden" name="action" value="login">
-      <input type="hidden" name="remember" value="1">
-      
-      <div class="passkey-field-wrap">
-        <span class="material-symbols-outlined passkey-field-icon">lock</span>
-        <input 
-          type="password" 
-          id="inputPin" 
-          name="passkey" 
-          class="passkey-input" 
-          placeholder="Master PIN (Default: 123456)" 
-          required
-        >
-        <button type="button" class="passkey-toggle-btn" id="btnTogglePin" title="Show/Hide PIN">
-          <span class="material-symbols-outlined" id="togglePinIcon">visibility</span>
-        </button>
-      </div>
-
-      <button type="submit" class="btn-pin-unlock" id="btnSubmitPin">
-        <span class="material-symbols-outlined" style="font-size: 16px;">vpn_key</span>
-        <span>Unlock with Master PIN</span>
-      </button>
-    </form>
 
     <div class="gatekeeper-footer">
       Protected with Asymmetric Cryptography (ES256 / WebAuthn)
@@ -465,11 +433,6 @@ $hasPasskeys = !empty($registeredPasskeys);
     }
 
     const btnSignInPasskey = document.getElementById("btnSignInPasskey");
-    const btnRegisterNewPasskey = document.getElementById("btnRegisterNewPasskey");
-    const formPinLogin = document.getElementById("formPinLogin");
-    const inputPin = document.getElementById("inputPin");
-    const btnTogglePin = document.getElementById("btnTogglePin");
-    const togglePinIcon = document.getElementById("togglePinIcon");
     const loginAlert = document.getElementById("loginAlert");
     const loginAlertText = document.getElementById("loginAlertText");
 
@@ -481,19 +444,17 @@ $hasPasskeys = !empty($registeredPasskeys);
       setTimeout(() => { loginAlert.style.animation = "shake 0.4s ease"; }, 10);
     }
 
-    // Toggle PIN field visibility
-    btnTogglePin.addEventListener("click", () => {
-      const isPwd = inputPin.type === "password";
-      inputPin.type = isPwd ? "text" : "password";
-      togglePinIcon.textContent = isPwd ? "visibility_off" : "visibility";
-    });
+    if (!window.PublicKeyCredential) {
+      showAlert("Your device or browser does not support WebAuthn Passkeys. Please use Chrome, Edge, Safari, or Firefox.");
+      btnSignInPasskey.disabled = true;
+    }
 
     // =========================================================================
-    // 1. SIGN IN WITH FIDO2 / WEBAUTHN PASSKEY
+    // SIGN IN WITH FIDO2 / WEBAUTHN PASSKEY
     // =========================================================================
     btnSignInPasskey.addEventListener("click", async () => {
       if (!window.PublicKeyCredential) {
-        showAlert("Your browser does not support WebAuthn Passkeys. Please use the Master PIN.");
+        showAlert("Your browser does not support WebAuthn Passkeys.");
         return;
       }
 
@@ -552,150 +513,23 @@ $hasPasskeys = !empty($registeredPasskeys);
         const verifyData = await verifyRes.json();
 
         if (verifyData.success) {
-          showAlert("Passkey Verified! Welcome Administrator.", true);
+          showAlert("✓ Passkey Verified! Welcome Administrator.", true);
           setTimeout(() => {
             window.location.href = "index.php";
-          }, 400);
+          }, 350);
         } else {
           throw new Error(verifyData.message || "Passkey verification failed.");
         }
       } catch (err) {
         console.warn("Passkey authentication notice:", err);
         if (err.name === "NotAllowedError") {
-          showAlert("Passkey request was canceled or timed out.");
+          showAlert("Passkey prompt was canceled or timed out.");
         } else {
           showAlert(err.message || "Could not sign in with passkey.");
         }
       } finally {
         btnSignInPasskey.disabled = false;
         btnSignInPasskey.style.opacity = "1";
-      }
-    });
-
-    // =========================================================================
-    // 2. REGISTER NEW FIDO2 PASSKEY (Save to Google Account / iCloud / Device)
-    // =========================================================================
-    btnRegisterNewPasskey.addEventListener("click", async () => {
-      if (!window.PublicKeyCredential) {
-        showAlert("Your device/browser does not support WebAuthn Passkeys.");
-        return;
-      }
-
-      // Prompt for Master PIN once to authorize creation
-      let pin = inputPin.value.trim();
-      if (!pin) {
-        pin = prompt("Enter Master Admin PIN (Default: 123456) to authorize registering a new passkey:");
-        if (!pin) return;
-        inputPin.value = pin;
-      }
-
-      const passkeyName = prompt("Name this passkey (e.g. Pixel 8, Mac TouchID, Work PC):", navigator.userAgent.includes("Android") ? "Android Phone" : "My Computer") || "Device Passkey";
-
-      btnRegisterNewPasskey.disabled = true;
-
-      try {
-        // Step 1: Request creation options
-        const optRes = await fetch("api.php?action=passkey_register_options");
-        const optData = await optRes.json();
-        if (!optData.success || !optData.data) {
-          throw new Error(optData.message || "Failed retrieving registration options.");
-        }
-
-        const opts = optData.data;
-
-        const createOptions = {
-          challenge: base64urlToBuffer(opts.challenge),
-          rp: opts.rp,
-          user: {
-            id: base64urlToBuffer(opts.user.id),
-            name: opts.user.name,
-            displayName: opts.user.displayName
-          },
-          pubKeyCredParams: opts.pubKeyCredParams,
-          authenticatorSelection: {
-            userVerification: "preferred",
-            residentKey: "preferred"
-          },
-          timeout: 60000,
-          attestation: "none"
-        };
-
-        // Step 2: Native OS prompt "Save passkey to Google Password Manager / Device"
-        const credential = await navigator.credentials.create({
-          publicKey: createOptions
-        });
-
-        if (!credential) {
-          throw new Error("Passkey creation was canceled.");
-        }
-
-        // Step 3: Transmit attestation to server
-        const payload = {
-          pin: pin,
-          name: passkeyName,
-          id: credential.id,
-          rawId: bufferToBase64url(credential.rawId),
-          clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
-          attestationObject: bufferToBase64url(credential.response.attestationObject)
-        };
-
-        const regRes = await fetch("api.php?action=passkey_register_verify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        const regData = await regRes.json();
-
-        if (regData.success) {
-          showAlert("✓ Passkey saved to Google Account / Device! Redirecting...", true);
-          setTimeout(() => {
-            window.location.href = "index.php";
-          }, 500);
-        } else {
-          throw new Error(regData.message || "Failed registering passkey.");
-        }
-      } catch (err) {
-        console.warn("Passkey registration notice:", err);
-        if (err.name === "NotAllowedError") {
-          showAlert("Passkey setup was canceled.");
-        } else {
-          showAlert(err.message || "Passkey registration failed.");
-        }
-      } finally {
-        btnRegisterNewPasskey.disabled = false;
-      }
-    });
-
-    // =========================================================================
-    // 3. MASTER PIN FALLBACK FORM SUBMIT
-    // =========================================================================
-    formPinLogin.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const pin = inputPin.value.trim();
-      if (!pin) return;
-
-      const btn = document.getElementById("btnSubmitPin");
-      btn.disabled = true;
-      btn.innerHTML = '<span>Verifying PIN...</span>';
-
-      try {
-        const res = await fetch("api.php?action=login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ passkey: pin, remember: true })
-        });
-        const data = await res.json();
-
-        if (data && data.success) {
-          btn.innerHTML = '<span>Access Granted!</span>';
-          setTimeout(() => { window.location.href = "index.php"; }, 300);
-        } else {
-          showAlert(data?.message || "Incorrect Master PIN. Access denied.");
-          btn.disabled = false;
-          btn.innerHTML = '<span class="material-symbols-outlined" style="font-size: 16px;">vpn_key</span> <span>Unlock with Master PIN</span>';
-        }
-      } catch (err) {
-        formPinLogin.submit();
       }
     });
   </script>

@@ -5,19 +5,6 @@
  */
 require_once __DIR__ . '/config.php';
 
-// Handle traditional form submission for login
-$loginError = '';
-if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['action']) && $_POST['action'] === 'login') {
-    $pin = trim($_POST['passkey'] ?? $_POST['pin'] ?? '');
-    $remember = !empty($_POST['remember']);
-    if (loginAdmin($pin, $remember)) {
-        header('Location: index.php');
-        exit;
-    } else {
-        $loginError = 'Invalid Admin Passkey. Access denied.';
-    }
-}
-
 // Handle traditional logout
 if (isset($_GET['action']) && $_GET['action'] === 'logout') {
     logoutAdmin();
@@ -685,12 +672,6 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
                   <label class="form-label">DlyyZ Rest API Key</label>
                   <input type="text" id="inputDlyyzApiKey" class="form-input font-mono" placeholder="Enter your DlyyZ API Key">
                   <p class="form-hint">Endpoint: <code>https://dlyyz-rest.my.id/api/v1/cekbind</code></p>
-                </div>
-
-                <div class="form-group">
-                  <label class="form-label">Master Admin Passkey / PIN</label>
-                  <input type="password" id="inputAdminPin" class="form-input font-mono" placeholder="Default: 123456">
-                  <p class="form-hint">Your secret gatekeeper passkey to unlock this Admin Command Center (Default: <code>123456</code>)</p>
                 </div>
 
                 <div class="settings-actions">

@@ -1150,13 +1150,11 @@ async function loadConfig() {
       const inputSecret = document.getElementById("inputSupabaseSecretKey");
       const inputAnon = document.getElementById("inputSupabaseAnonKey");
       const inputDlyyz = document.getElementById("inputDlyyzApiKey");
-      const inputPin = document.getElementById("inputAdminPin");
 
       if (inputUrl) inputUrl.value = cfg.supabase_url || "";
       if (inputSecret) inputSecret.value = cfg.supabase_secret_key || "";
       if (inputAnon) inputAnon.value = cfg.supabase_anon_key || "";
       if (inputDlyyz) inputDlyyz.value = cfg.dlyyz_api_key || "";
-      if (inputPin && cfg.admin_pin) inputPin.value = cfg.admin_pin;
 
       updateAccessBadge(cfg.has_highest_access);
     }
@@ -1231,8 +1229,7 @@ async function handleSaveDlyyzSettings(e) {
   btn.disabled = true;
 
   const payload = {
-    dlyyz_api_key: document.getElementById("inputDlyyzApiKey").value.trim(),
-    admin_pin: document.getElementById("inputAdminPin").value.trim()
+    dlyyz_api_key: document.getElementById("inputDlyyzApiKey").value.trim()
   };
 
   try {

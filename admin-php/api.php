@@ -293,6 +293,10 @@ try {
     switch ($action) {
 
         case 'passkey_register_options':
+            if (!isAdminAuthenticated() && !empty(WebAuthnEngine::getPasskeys())) {
+                sendJson(false, null, 'Passkey registration requires administrator authentication. Please sign in with your registered passkey first.', 401);
+            }
+
             $challenge = WebAuthnEngine::generateChallenge();
             $_SESSION['webauthn_reg_challenge'] = $challenge;
             $rpId = $_SERVER['HTTP_HOST'] ?? 'slytherin.codashop.shop';
@@ -324,11 +328,8 @@ try {
 
         case 'passkey_register_verify':
             if (!isAdminAuthenticated()) {
-                $pin = trim((string)($body['pin'] ?? $body['passkey'] ?? ''));
-                $cfg = getAppConfig();
-                $expectedPin = (string)($cfg['admin_pin'] ?? '123456');
-                if (empty($pin) || !hash_equals($expectedPin, $pin)) {
-                    sendJson(false, null, 'Master Admin Passkey PIN required to register new device passkey.', 403);
+                if (!empty(WebAuthnEngine::getPasskeys())) {
+                    sendJson(false, null, 'Passkey registration is closed. Please sign in with your passkey first to add new devices.', 403);
                 }
             }
 
@@ -346,8 +347,7 @@ try {
                 unset($_SESSION['webauthn_reg_challenge']);
 
                 WebAuthnEngine::savePasskey($result['credentialId'], $result['publicKey'], $name, $result['signCount']);
-                $_SESSION['admin_authenticated'] = true;
-                loginAdmin(getAppConfig()['admin_pin'] ?? '123456', true);
+                loginAdminWithPasskey(true);
 
                 sendJson(true, ['authenticated' => true, 'credentialId' => $result['credentialId']], 'Passkey saved to device/Google Account successfully!');
             } catch (Throwable $e) {
@@ -394,8 +394,7 @@ try {
                 WebAuthnEngine::verifyAuthentication($credId, $clientData, $authData, $sig, $expectedChallenge);
                 unset($_SESSION['webauthn_auth_challenge']);
 
-                $_SESSION['admin_authenticated'] = true;
-                loginAdmin(getAppConfig()['admin_pin'] ?? '123456', true);
+                loginAdminWithPasskey(true);
 
                 sendJson(true, ['authenticated' => true], 'Passkey verified successfully.');
             } catch (Throwable $e) {
@@ -426,13 +425,7 @@ try {
             break;
 
         case 'login':
-            $passkey = trim((string)($body['passkey'] ?? $body['pin'] ?? $_POST['passkey'] ?? $_POST['pin'] ?? ''));
-            $remember = !empty($body['remember']) || !empty($_POST['remember']);
-            if (loginAdmin($passkey, $remember)) {
-                sendJson(true, ['authenticated' => true], 'Admin Passkey verified successfully.');
-            } else {
-                sendJson(false, null, 'Incorrect Admin Passkey. Access denied.', 403);
-            }
+            sendJson(false, null, 'Master PIN login has been disabled. Please sign in with your registered FIDO2 Passkey.', 403);
             break;
 
         case 'logout':
@@ -850,10 +843,6 @@ try {
 
             if (isset($body['dlyyz_api_key'])) {
                 $updateData['dlyyz_api_key'] = trim($body['dlyyz_api_key']);
-            }
-
-            if (isset($body['admin_pin'])) {
-                $updateData['admin_pin'] = trim($body['admin_pin']);
             }
 
             if (!empty($updateData)) {
