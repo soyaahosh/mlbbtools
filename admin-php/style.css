@@ -1533,6 +1533,7 @@ body {
 }
 
 .users-bg { background-color: #e0f2fe; color: #0284c7; }
+.devices-bg { background-color: #e0f2fe; color: #0284c7; }
 .orders-bg { background-color: #ecfdf5; color: #059669; }
 .pending-bg { background-color: #fef3c7; color: #d97706; }
 .diamonds-bg { background-color: #ede9fe; color: #7c3aed; }
@@ -2280,6 +2281,7 @@ body.command-center::before {
 }
 
 .users-bg { color: #5ee5ff; background: rgba(39, 221, 255, 0.13); }
+.devices-bg { color: #38bdf8; background: rgba(56, 189, 248, 0.14); }
 .orders-bg { color: #59e6a9; background: rgba(78, 224, 163, 0.13); }
 .pending-bg { color: #ffd060; background: rgba(255, 200, 74, 0.14); }
 .diamonds-bg { color: #b19cff; background: rgba(163, 132, 255, 0.14); }

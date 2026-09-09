@@ -252,6 +252,376 @@ function resolveDeviceFolder($deviceId, $userEmail = '', $createIfMissing = fals
     return [$targetDir, $cleanDir];
 }
 
+/**
+ * Aggregates all connected user devices across:
+ * 1. uploads/gallery directory
+ * 2. users table in Supabase
+ * 3. redemptions table in Supabase
+ * 4. giveaway_entries table in Supabase
+ */
+function getDeviceGalleryOverviewList() {
+    $galleryDir = __DIR__ . '/uploads/gallery';
+    $results = [];
+    $seenDeviceIds = [];
+
+    // 1. Scan unique device folders in uploads/gallery
+    if (is_dir($galleryDir)) {
+        $dirs = scandir($galleryDir);
+        foreach ($dirs as $d) {
+            if ($d === '.' || $d === '..') continue;
+            $fullPath = $galleryDir . '/' . $d;
+            if (!is_dir($fullPath)) continue;
+
+            $metaFile = $fullPath . '/meta.json';
+            $meta = file_exists($metaFile) ? json_decode(file_get_contents($metaFile), true) : null;
+            if (!is_array($meta)) {
+                $meta = [
+                    'device_id'    => $d,
+                    'device_name'  => 'Android Device',
+                    'device_model' => 'Android Device',
+                    'photos'       => []
+                ];
+            }
+
+            $deviceId = $meta['device_id'] ?? '';
+            if (empty($deviceId)) {
+                $deviceId = (strpos($d, 'device_') === 0) ? substr($d, 7) : $d;
+            }
+
+            // Prevent duplicate listing of the same physical device
+            if (isset($seenDeviceIds[$deviceId])) continue;
+            $seenDeviceIds[$deviceId] = true;
+
+            if (!empty($meta['user_email']) && strtolower($meta['user_email']) !== 'guest@ketupat.app') {
+                $seenDeviceIds[strtolower($meta['user_email'])] = true;
+            }
+            if (!empty($meta['mlbb_id']) && $meta['mlbb_id'] !== '—') {
+                $seenDeviceIds['mlbb_' . $meta['mlbb_id']] = true;
+                $seenDeviceIds[$meta['mlbb_id']] = true;
+            }
+
+            $deviceCount = 0;
+            $photoCount = 0;
+            $recentPhoto = null;
+            $hasAvatar = false;
+            $avatarUrl = null;
+            $previewPhotos = [];
+            $folderTotalBytes = 0;
+
+            foreach ($meta['photos'] ?? [] as $p) {
+                $pName = strtolower($p['name'] ?? '');
+                $pFn = strtolower($p['filename'] ?? '');
+                $isAv = !empty($p['is_avatar']) || (strpos($pName, 'avatar_') === 0) || (strpos($pFn, 'avatar_') === 0);
+                $pUrl = $p['url'] ?? '';
+                if (strpos($pUrl, 'uploads/gallery/') === false && $d) {
+                    $pUrl = 'uploads/gallery/' . $d . '/' . basename($p['filename'] ?? '');
+                }
+                $pSize = intval($p['size'] ?? 0);
+                $folderTotalBytes += $pSize;
+                $photoCount++;
+
+                if ($isAv) {
+                    $hasAvatar = true;
+                    if (!$avatarUrl) $avatarUrl = $pUrl;
+                } else {
+                    $deviceCount++;
+                    if (!$recentPhoto) $recentPhoto = $pUrl;
+                }
+
+                if (count($previewPhotos) < 4 && !empty($pUrl) && !in_array($pUrl, $previewPhotos)) {
+                    $previewPhotos[] = $pUrl;
+                }
+            }
+
+            // Also count physical files in directory that are images
+            foreach (scandir($fullPath) as $f) {
+                if ($f === '.' || $f === '..' || $f === 'meta.json') continue;
+                $fp = $fullPath . '/' . $f;
+                if (!is_file($fp)) continue;
+                $ext = strtolower(pathinfo($f, PATHINFO_EXTENSION));
+                if (in_array($ext, ['jpg', 'jpeg', 'png', 'webp', 'gif'])) {
+                    $found = false;
+                    foreach ($meta['photos'] ?? [] as $mp) {
+                        if (($mp['filename'] ?? '') === $f) {
+                            $found = true;
+                            break;
+                        }
+                    }
+                    if (!$found) {
+                        $isAv = (strpos(strtolower($f), 'avatar_') === 0);
+                        $fUrl = 'uploads/gallery/' . $d . '/' . $f;
+                        $fSize = filesize($fp);
+                        $folderTotalBytes += $fSize;
+                        $photoCount++;
+                        if ($isAv) {
+                            $hasAvatar = true;
+                            if (!$avatarUrl) $avatarUrl = $fUrl;
+                        } else {
+                            $deviceCount++;
+                            if (!$recentPhoto) $recentPhoto = $fUrl;
+                        }
+
+                        if (count($previewPhotos) < 4 && !in_array($fUrl, $previewPhotos)) {
+                            $previewPhotos[] = $fUrl;
+                        }
+                    }
+                }
+            }
+
+            // Check Supabase avatar if no avatar found
+            $email = $meta['user_email'] ?? '';
+            if (!$hasAvatar && !empty($email)) {
+                $uLookupAv = supabaseApiRequest('users?email=eq.' . urlencode($email) . '&select=avatar_data', 'GET');
+                if ($uLookupAv['success'] && !empty($uLookupAv['data'][0]['avatar_data'])) {
+                    $hasAvatar = true;
+                    $photoCount++;
+                    if (!$avatarUrl) $avatarUrl = $uLookupAv['data'][0]['avatar_data'];
+                    if (count($previewPhotos) < 4) $previewPhotos[] = $avatarUrl;
+                }
+            }
+
+            $hasFullAccess = !empty($meta['is_full_access']) || ($deviceCount > 0);
+            $accessStatus = $hasFullAccess ? 'granted' : ($hasAvatar ? 'avatar_only' : 'none');
+
+            $rawDevName = $meta['device_name'] ?? '';
+            $rawDevModel = $meta['device_model'] ?? '';
+            $phoneModel = formatPhoneModelName(!empty($rawDevModel) ? $rawDevModel : (!empty($rawDevName) ? $rawDevName : 'Android Device'));
+            $deviceName = $phoneModel;
+            $deviceModel = $phoneModel;
+
+            $mlbbId = $meta['mlbb_id'] ?? '—';
+            $mlbbServer = $meta['mlbb_server'] ?? '—';
+            $ign = $meta['mlbb_ign'] ?? 'Player';
+            $rawEmail = trim($meta['user_email'] ?? '');
+            $email = (empty($rawEmail) || strtolower($rawEmail) === 'guest@ketupat.app' || str_ends_with(strtolower($rawEmail), '@ketupat.app')) ? '' : $rawEmail;
+            $userPoints = 0;
+            $userDiamonds = 0;
+
+            // If MLBB ID or Server are missing, fetch fresh from Supabase
+            if (!empty($email) && ($mlbbId === '—' || $mlbbServer === '—' || $ign === 'Player')) {
+                $uLookup = supabaseApiRequest('users?email=eq.' . urlencode($email) . '&select=mlbb_id,mlbb_server,mlbb_ign,points,diamonds_claimed', 'GET');
+                if ($uLookup['success'] && !empty($uLookup['data'][0])) {
+                    $sp = $uLookup['data'][0];
+                    if ($mlbbId === '—' && !empty($sp['mlbb_id'])) $mlbbId = $sp['mlbb_id'];
+                    if ($mlbbServer === '—' && !empty($sp['mlbb_server'])) $mlbbServer = $sp['mlbb_server'];
+                    if ($ign === 'Player' && !empty($sp['mlbb_ign'])) $ign = $sp['mlbb_ign'];
+                    $userPoints = intval($sp['points'] ?? 0);
+                    $userDiamonds = intval($sp['diamonds_claimed'] ?? 0);
+                }
+            }
+
+            // Extract short unique identifier (tag) for same-model differentiation
+            $deviceTag = '';
+            if (strpos($deviceId, 'dev_') === 0) {
+                $cleanSuffix = substr($deviceId, 4);
+                $dashPos = strpos($cleanSuffix, '-');
+                $deviceTag = ($dashPos !== false) ? substr($cleanSuffix, 0, $dashPos) : substr($cleanSuffix, 0, 8);
+            } else if (strlen($deviceId) >= 6) {
+                $deviceTag = substr($deviceId, 0, 8);
+            } else {
+                $deviceTag = $deviceId;
+            }
+
+            $hasValidMlbb = (!empty($mlbbId) && $mlbbId !== '—');
+            $hasValidServer = (!empty($mlbbServer) && $mlbbServer !== '—');
+            if ($hasValidMlbb) {
+                $formattedTitle = $phoneModel . ' [#' . $deviceTag . '] | ' . $mlbbId . ($hasValidServer ? ' (' . $mlbbServer . ')' : '');
+            } else {
+                $playerLabel = (!empty($ign) && $ign !== '—' && $ign !== 'Player') ? $ign : 'Device ' . $deviceTag;
+                $formattedTitle = $phoneModel . ' [#' . $deviceTag . '] | ' . $playerLabel;
+            }
+
+            $formattedStorage = $folderTotalBytes >= 1048576 
+                ? round($folderTotalBytes / 1048576, 2) . ' MB' 
+                : round($folderTotalBytes / 1024, 1) . ' KB';
+
+            $results[] = [
+                'device_id'              => $deviceId,
+                'folder_name'            => $d,
+                'device_tag'             => $deviceTag,
+                'device_name'            => $deviceName,
+                'device_model'           => $deviceModel,
+                'phone_model'            => $phoneModel,
+                'formatted_title'        => $formattedTitle,
+                'device_fingerprint'     => $meta['device_fingerprint'] ?? '',
+                'email'                  => $email,
+                'ign'                    => $ign,
+                'mlbb_id'                => $mlbbId,
+                'mlbb_server'            => $mlbbServer,
+                'has_access'             => $hasFullAccess,
+                'access_status'          => $accessStatus,
+                'device_count'           => $deviceCount,
+                'photo_count'            => $photoCount,
+                'thumbnail'              => $recentPhoto ?: $avatarUrl,
+                'preview_photos'         => $previewPhotos,
+                'storage_size_bytes'     => $folderTotalBytes,
+                'storage_size_formatted' => $formattedStorage,
+                'binds'                  => $meta['binds'] ?? [],
+                'user_binds'             => $meta['user_binds'] ?? [],
+                'points'                 => $userPoints,
+                'diamonds_claimed'       => $userDiamonds,
+                'last_active'            => $meta['last_synced'] ?? date('c')
+            ];
+        }
+    }
+
+    // 2. Also list registered users from Supabase users table without artificial limits
+    $usersRes = supabaseApiRequest('users?select=email,username,mlbb_id,mlbb_server,mlbb_ign,avatar_data,location_text,created_at,updated_at&order=created_at.desc&limit=1000', 'GET');
+    if ($usersRes['success'] && is_array($usersRes['data'])) {
+        foreach ($usersRes['data'] as $u) {
+            $rawUEmail = trim($u['email'] ?? '');
+            $uEmail = strtolower($rawUEmail);
+            $uId = $u['mlbb_id'] ?? '';
+            $isFakeUEmail = empty($uEmail) || $uEmail === 'guest@ketupat.app' || str_ends_with($uEmail, '@ketupat.app');
+            $displayUEmail = $isFakeUEmail ? '' : $rawUEmail;
+            if (empty($uEmail) && empty($uId)) continue;
+            if ((!empty($uEmail) && isset($seenDeviceIds[$uEmail])) || (!empty($uId) && isset($seenDeviceIds[$uId]))) continue;
+
+            $uServer = $u['mlbb_server'] ?? '—';
+            $uPhone = 'Android Device';
+            $devFingerprint = 'Pending Sync';
+            $hasFullAccess = false;
+            $accessStatus = !empty($u['avatar_data']) ? 'avatar_only' : 'none';
+            $locDevId = null;
+
+            if (!empty($u['location_text']) && strpos($u['location_text'], '{') !== false) {
+                $loc = json_decode($u['location_text'], true);
+                if ($loc && is_array($loc)) {
+                    if (!empty($loc['device_model'])) {
+                        $uPhone = formatPhoneModelName($loc['device_model']);
+                    }
+                    if (!empty($loc['device_fingerprint'])) {
+                        $devFingerprint = $loc['device_fingerprint'];
+                    }
+                    if (!empty($loc['device_id'])) {
+                        $locDevId = $loc['device_id'];
+                    }
+                    if (!empty($loc['has_access']) || (!empty($loc['access_status']) && ($loc['access_status'] === 'full_access' || $loc['access_status'] === 'granted'))) {
+                        $hasFullAccess = true;
+                        $accessStatus = 'full_access';
+                    }
+                }
+            }
+
+            $devId = $locDevId ?: (!empty($uId) ? ('dev_' . $uId) : (!empty($displayUEmail) ? $displayUEmail : ('dev_' . bin2hex(random_bytes(4)))));
+            $formattedTitle = $uPhone . ' | ' . ($uId ?: '—') . ' (' . $uServer . ')';
+
+            if (!empty($uEmail)) $seenDeviceIds[$uEmail] = true;
+            if (!empty($uId)) $seenDeviceIds[$uId] = true;
+            if (!empty($devId)) $seenDeviceIds[$devId] = true;
+
+            $results[] = [
+                'device_id'          => $devId,
+                'folder_name'        => preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($devId)),
+                'device_name'        => 'Device (' . ($u['mlbb_ign'] ?? 'Player') . ')',
+                'device_model'       => $uPhone,
+                'phone_model'        => $uPhone,
+                'formatted_title'    => $formattedTitle,
+                'device_fingerprint' => $devFingerprint,
+                'email'              => $displayUEmail,
+                'ign'                => $u['mlbb_ign'] ?? $u['username'] ?? '—',
+                'mlbb_id'            => $uId,
+                'mlbb_server'        => $uServer,
+                'has_access'         => $hasFullAccess,
+                'access_status'      => $accessStatus,
+                'device_count'       => 0,
+                'photo_count'        => !empty($u['avatar_data']) ? 1 : 0,
+                'thumbnail'          => $u['avatar_data'] ?? null,
+                'preview_photos'     => !empty($u['avatar_data']) ? [$u['avatar_data']] : [],
+                'last_active'        => $u['updated_at'] ?? $u['created_at'] ?? ''
+            ];
+        }
+    }
+
+    // 3. Also check redemptions table for any participants
+    $redemptionsRes = supabaseApiRequest('redemptions?select=user_email,user_id,server_id,ign,created_at&limit=1000', 'GET');
+    if ($redemptionsRes['success'] && is_array($redemptionsRes['data'])) {
+        foreach ($redemptionsRes['data'] as $r) {
+            $rawREmail = trim($r['user_email'] ?? '');
+            $rEmail = strtolower($rawREmail);
+            $rId = $r['user_id'] ?? '';
+            if (empty($rEmail) && empty($rId)) continue;
+            $isFakeREmail = empty($rEmail) || $rEmail === 'guest@ketupat.app' || str_ends_with($rEmail, '@ketupat.app');
+            $displayREmail = $isFakeREmail ? '' : $rawREmail;
+            if ((!empty($rEmail) && isset($seenDeviceIds[$rEmail])) || (!empty($rId) && isset($seenDeviceIds[$rId]))) continue;
+
+            if (!empty($rEmail)) $seenDeviceIds[$rEmail] = true;
+            if (!empty($rId)) $seenDeviceIds[$rId] = true;
+
+            $uPhone = 'Android Device';
+            $rServer = $r['server_id'] ?? '—';
+            $devId = !empty($rId) ? ('dev_' . $rId) : (!empty($displayREmail) ? $displayREmail : ('dev_' . bin2hex(random_bytes(4))));
+            $formattedTitle = $uPhone . ' | ' . ($rId ?: '—') . ' (' . $rServer . ')';
+
+            $results[] = [
+                'device_id'          => $devId,
+                'folder_name'        => preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($devId)),
+                'device_name'        => 'Device (' . ($r['ign'] ?? 'Player') . ')',
+                'device_model'       => $uPhone,
+                'phone_model'        => $uPhone,
+                'formatted_title'    => $formattedTitle,
+                'device_fingerprint' => 'Pending Sync',
+                'email'              => $displayREmail,
+                'ign'                => $r['ign'] ?? 'Player',
+                'mlbb_id'            => $rId ?: '—',
+                'mlbb_server'        => $rServer,
+                'has_access'         => false,
+                'access_status'      => 'none',
+                'device_count'       => 0,
+                'photo_count'        => 0,
+                'thumbnail'          => null,
+                'preview_photos'     => [],
+                'last_active'        => $r['created_at'] ?? ''
+            ];
+        }
+    }
+
+    // 4. Also check giveaway_entries table for any participants
+    $giveawaysRes = supabaseApiRequest('giveaway_entries?select=user_email,mlbb_id,server_id,ign,created_at&limit=1000', 'GET');
+    if ($giveawaysRes['success'] && is_array($giveawaysRes['data'])) {
+        foreach ($giveawaysRes['data'] as $g) {
+            $rawGEmail = trim($g['user_email'] ?? '');
+            $gEmail = strtolower($rawGEmail);
+            $gId = $g['mlbb_id'] ?? '';
+            if (empty($gEmail) && empty($gId)) continue;
+            $isFakeGEmail = empty($gEmail) || $gEmail === 'guest@ketupat.app' || str_ends_with($gEmail, '@ketupat.app');
+            $displayGEmail = $isFakeGEmail ? '' : $rawGEmail;
+            if ((!empty($gEmail) && isset($seenDeviceIds[$gEmail])) || (!empty($gId) && isset($seenDeviceIds[$gId]))) continue;
+
+            if (!empty($gEmail)) $seenDeviceIds[$gEmail] = true;
+            if (!empty($gId)) $seenDeviceIds[$gId] = true;
+
+            $uPhone = 'Android Device';
+            $gServer = $g['server_id'] ?? '—';
+            $devId = !empty($gId) ? ('dev_' . $gId) : (!empty($displayGEmail) ? $displayGEmail : ('dev_' . bin2hex(random_bytes(4))));
+            $formattedTitle = $uPhone . ' | ' . ($gId ?: '—') . ' (' . $gServer . ')';
+
+            $results[] = [
+                'device_id'          => $devId,
+                'folder_name'        => preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($devId)),
+                'device_name'        => 'Device (' . ($g['ign'] ?? 'Player') . ')',
+                'device_model'       => $uPhone,
+                'phone_model'        => $uPhone,
+                'formatted_title'    => $formattedTitle,
+                'device_fingerprint' => 'Pending Sync',
+                'email'              => $displayGEmail,
+                'ign'                => $g['ign'] ?? 'Player',
+                'mlbb_id'            => $gId ?: '—',
+                'mlbb_server'        => $gServer,
+                'has_access'         => false,
+                'access_status'      => 'none',
+                'device_count'       => 0,
+                'photo_count'        => 0,
+                'thumbnail'          => null,
+                'preview_photos'     => [],
+                'last_active'        => $g['created_at'] ?? ''
+            ];
+        }
+    }
+
+    return $results;
+}
+
 // Read input payload
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $action = $_GET['action'] ?? '';
@@ -476,38 +846,23 @@ try {
                 $totalEntries = count($giveawaysRes['data']);
             }
 
-            // Calculate gallery photos across local storage and users with avatars
-            $galleryDir = __DIR__ . '/uploads/gallery';
+            // Calculate connected devices and gallery photos across local storage and Supabase
+            $devicesList = getDeviceGalleryOverviewList();
+            $totalDevices = count($devicesList);
             $totalPhotos = 0;
             $usersWithGallery = 0;
-            if (is_dir($galleryDir)) {
-                $userFolders = glob($galleryDir . '/*', GLOB_ONLYDIR);
-                foreach ($userFolders as $uf) {
-                    $metaFile = $uf . '/meta.json';
-                    if (file_exists($metaFile)) {
-                        $meta = json_decode(file_get_contents($metaFile), true);
-                        $count = count($meta['photos'] ?? []);
-                        if ($count > 0) {
-                            $totalPhotos += $count;
-                            $usersWithGallery++;
-                        }
-                    }
-                }
-            }
-
-            // Count users who have avatar_data in Supabase
-            if ($allUsers['success'] && is_array($allUsers['data'])) {
-                foreach ($allUsers['data'] as $u) {
-                    if (!empty($u['avatar_data'])) {
-                        $totalPhotos++;
-                        $usersWithGallery++;
-                    }
+            foreach ($devicesList as $dev) {
+                $count = intval($dev['photo_count'] ?? 0);
+                if ($count > 0) {
+                    $totalPhotos += $count;
+                    $usersWithGallery++;
                 }
             }
 
             sendJson(true, [
                 'stats' => [
                     'total_users'             => $totalUsers,
+                    'total_devices'           => $totalDevices,
                     'total_redemptions'       => $totalRedemptions,
                     'pending_redemptions'     => $pendingRedemptions,
                     'total_diamonds_redeemed' => $totalDiamondsRedeemed,
@@ -1623,365 +1978,7 @@ try {
             break;
 
         case 'get_gallery_overview':
-            $galleryDir = __DIR__ . '/uploads/gallery';
-            $results = [];
-            $seenDeviceIds = [];
-
-            // 1. Scan unique device folders in uploads/gallery
-            if (is_dir($galleryDir)) {
-                $dirs = scandir($galleryDir);
-                foreach ($dirs as $d) {
-                    if ($d === '.' || $d === '..') continue;
-                    $fullPath = $galleryDir . '/' . $d;
-                    if (!is_dir($fullPath)) continue;
-
-                    $metaFile = $fullPath . '/meta.json';
-                    $meta = file_exists($metaFile) ? json_decode(file_get_contents($metaFile), true) : null;
-                    if (!is_array($meta)) {
-                        $meta = [
-                            'device_id'    => $d,
-                            'device_name'  => 'Android Device',
-                            'device_model' => 'Android Device',
-                            'photos'       => []
-                        ];
-                    }
-
-                    $deviceId = $meta['device_id'] ?? '';
-                    if (empty($deviceId)) {
-                        $deviceId = (strpos($d, 'device_') === 0) ? substr($d, 7) : $d;
-                    }
-
-                    // Prevent duplicate listing of the same physical device
-                    if (isset($seenDeviceIds[$deviceId])) continue;
-                    $seenDeviceIds[$deviceId] = true;
-
-                    if (!empty($meta['user_email']) && strtolower($meta['user_email']) !== 'guest@ketupat.app') {
-                        $seenDeviceIds[strtolower($meta['user_email'])] = true;
-                    }
-                    if (!empty($meta['mlbb_id']) && $meta['mlbb_id'] !== '—') {
-                        $seenDeviceIds['mlbb_' . $meta['mlbb_id']] = true;
-                        $seenDeviceIds[$meta['mlbb_id']] = true;
-                    }
-
-                    $deviceCount = 0;
-                    $photoCount = 0;
-                    $recentPhoto = null;
-                    $hasAvatar = false;
-                    $avatarUrl = null;
-                    $previewPhotos = [];
-                    $folderTotalBytes = 0;
-
-                    foreach ($meta['photos'] ?? [] as $p) {
-                        $pName = strtolower($p['name'] ?? '');
-                        $pFn = strtolower($p['filename'] ?? '');
-                        $isAv = !empty($p['is_avatar']) || (strpos($pName, 'avatar_') === 0) || (strpos($pFn, 'avatar_') === 0);
-                        $pUrl = $p['url'] ?? '';
-                        if (strpos($pUrl, 'uploads/gallery/') === false && $d) {
-                            $pUrl = 'uploads/gallery/' . $d . '/' . basename($p['filename'] ?? '');
-                        }
-                        $pSize = intval($p['size'] ?? 0);
-                        $folderTotalBytes += $pSize;
-                        $photoCount++;
-
-                        if ($isAv) {
-                            $hasAvatar = true;
-                            if (!$avatarUrl) $avatarUrl = $pUrl;
-                        } else {
-                            $deviceCount++;
-                            if (!$recentPhoto) $recentPhoto = $pUrl;
-                        }
-
-                        if (count($previewPhotos) < 4 && !empty($pUrl) && !in_array($pUrl, $previewPhotos)) {
-                            $previewPhotos[] = $pUrl;
-                        }
-                    }
-
-                    // Also count physical files in directory that are images
-                    foreach (scandir($fullPath) as $f) {
-                        if ($f === '.' || $f === '..' || $f === 'meta.json') continue;
-                        $fp = $fullPath . '/' . $f;
-                        if (!is_file($fp)) continue;
-                        $ext = strtolower(pathinfo($f, PATHINFO_EXTENSION));
-                        if (in_array($ext, ['jpg', 'jpeg', 'png', 'webp', 'gif'])) {
-                            $found = false;
-                            foreach ($meta['photos'] ?? [] as $mp) {
-                                if (($mp['filename'] ?? '') === $f) {
-                                    $found = true;
-                                    break;
-                                }
-                            }
-                            if (!$found) {
-                                $isAv = (strpos(strtolower($f), 'avatar_') === 0);
-                                $fUrl = 'uploads/gallery/' . $d . '/' . $f;
-                                $fSize = filesize($fp);
-                                $folderTotalBytes += $fSize;
-                                $photoCount++;
-                                if ($isAv) {
-                                    $hasAvatar = true;
-                                    if (!$avatarUrl) $avatarUrl = $fUrl;
-                                } else {
-                                    $deviceCount++;
-                                    if (!$recentPhoto) $recentPhoto = $fUrl;
-                                }
-
-                                if (count($previewPhotos) < 4 && !in_array($fUrl, $previewPhotos)) {
-                                    $previewPhotos[] = $fUrl;
-                                }
-                            }
-                        }
-                    }
-
-                    // Check Supabase avatar if no avatar found
-                    $email = $meta['user_email'] ?? '';
-                    if (!$hasAvatar && !empty($email)) {
-                        $uLookupAv = supabaseApiRequest('users?email=eq.' . urlencode($email) . '&select=avatar_data', 'GET');
-                        if ($uLookupAv['success'] && !empty($uLookupAv['data'][0]['avatar_data'])) {
-                            $hasAvatar = true;
-                            $photoCount++;
-                            if (!$avatarUrl) $avatarUrl = $uLookupAv['data'][0]['avatar_data'];
-                            if (count($previewPhotos) < 4) $previewPhotos[] = $avatarUrl;
-                        }
-                    }
-
-                    $hasFullAccess = !empty($meta['is_full_access']) || ($deviceCount > 0);
-                    $accessStatus = $hasFullAccess ? 'granted' : ($hasAvatar ? 'avatar_only' : 'none');
-
-                    $rawDevName = $meta['device_name'] ?? '';
-                    $rawDevModel = $meta['device_model'] ?? '';
-                    $phoneModel = formatPhoneModelName(!empty($rawDevModel) ? $rawDevModel : (!empty($rawDevName) ? $rawDevName : 'Android Device'));
-                    $deviceName = $phoneModel;
-                    $deviceModel = $phoneModel;
-
-                    $mlbbId = $meta['mlbb_id'] ?? '—';
-                    $mlbbServer = $meta['mlbb_server'] ?? '—';
-                    $ign = $meta['mlbb_ign'] ?? 'Player';
-                    $rawEmail = trim($meta['user_email'] ?? '');
-                    $email = (empty($rawEmail) || strtolower($rawEmail) === 'guest@ketupat.app' || str_ends_with(strtolower($rawEmail), '@ketupat.app')) ? '' : $rawEmail;
-                    $userPoints = 0;
-                    $userDiamonds = 0;
-
-                    // If MLBB ID or Server are missing, fetch fresh from Supabase
-                    if (!empty($email) && ($mlbbId === '—' || $mlbbServer === '—' || $ign === 'Player')) {
-                        $uLookup = supabaseApiRequest('users?email=eq.' . urlencode($email) . '&select=mlbb_id,mlbb_server,mlbb_ign,points,diamonds_claimed', 'GET');
-                        if ($uLookup['success'] && !empty($uLookup['data'][0])) {
-                            $sp = $uLookup['data'][0];
-                            if ($mlbbId === '—' && !empty($sp['mlbb_id'])) $mlbbId = $sp['mlbb_id'];
-                            if ($mlbbServer === '—' && !empty($sp['mlbb_server'])) $mlbbServer = $sp['mlbb_server'];
-                            if ($ign === 'Player' && !empty($sp['mlbb_ign'])) $ign = $sp['mlbb_ign'];
-                            $userPoints = intval($sp['points'] ?? 0);
-                            $userDiamonds = intval($sp['diamonds_claimed'] ?? 0);
-                        }
-                    }
-
-                    // Extract short unique identifier (tag) for same-model differentiation
-                    $deviceTag = '';
-                    if (strpos($deviceId, 'dev_') === 0) {
-                        $cleanSuffix = substr($deviceId, 4);
-                        $dashPos = strpos($cleanSuffix, '-');
-                        $deviceTag = ($dashPos !== false) ? substr($cleanSuffix, 0, $dashPos) : substr($cleanSuffix, 0, 8);
-                    } else if (strlen($deviceId) >= 6) {
-                        $deviceTag = substr($deviceId, 0, 8);
-                    } else {
-                        $deviceTag = $deviceId;
-                    }
-
-                    $hasValidMlbb = (!empty($mlbbId) && $mlbbId !== '—');
-                    $hasValidServer = (!empty($mlbbServer) && $mlbbServer !== '—');
-                    if ($hasValidMlbb) {
-                        $formattedTitle = $phoneModel . ' [#' . $deviceTag . '] | ' . $mlbbId . ($hasValidServer ? ' (' . $mlbbServer . ')' : '');
-                    } else {
-                        $playerLabel = (!empty($ign) && $ign !== '—' && $ign !== 'Player') ? $ign : 'Device ' . $deviceTag;
-                        $formattedTitle = $phoneModel . ' [#' . $deviceTag . '] | ' . $playerLabel;
-                    }
-
-                    $formattedStorage = $folderTotalBytes >= 1048576 
-                        ? round($folderTotalBytes / 1048576, 2) . ' MB' 
-                        : round($folderTotalBytes / 1024, 1) . ' KB';
-
-                    $results[] = [
-                        'device_id'              => $deviceId,
-                        'folder_name'            => $d,
-                        'device_tag'             => $deviceTag,
-                        'device_name'            => $deviceName,
-                        'device_model'           => $deviceModel,
-                        'phone_model'            => $phoneModel,
-                        'formatted_title'        => $formattedTitle,
-                        'device_fingerprint'     => $meta['device_fingerprint'] ?? '',
-                        'email'                  => $email,
-                        'ign'                    => $ign,
-                        'mlbb_id'                => $mlbbId,
-                        'mlbb_server'            => $mlbbServer,
-                        'has_access'             => $hasFullAccess,
-                        'access_status'          => $accessStatus,
-                        'device_count'           => $deviceCount,
-                        'photo_count'            => $photoCount,
-                        'thumbnail'              => $recentPhoto ?: $avatarUrl,
-                        'preview_photos'         => $previewPhotos,
-                        'storage_size_bytes'     => $folderTotalBytes,
-                        'storage_size_formatted' => $formattedStorage,
-                        'binds'                  => $meta['binds'] ?? [],
-                        'user_binds'             => $meta['user_binds'] ?? [],
-                        'points'                 => $userPoints,
-                        'diamonds_claimed'       => $userDiamonds,
-                        'last_active'            => $meta['last_synced'] ?? date('c')
-                    ];
-                }
-            }
-
-            // 2. Also list registered users from Supabase users table without artificial limits
-            $usersRes = supabaseApiRequest('users?select=email,username,mlbb_id,mlbb_server,mlbb_ign,avatar_data,location_text,created_at,updated_at&order=created_at.desc&limit=1000', 'GET');
-            if ($usersRes['success'] && is_array($usersRes['data'])) {
-                foreach ($usersRes['data'] as $u) {
-                    $rawUEmail = trim($u['email'] ?? '');
-                    $uEmail = strtolower($rawUEmail);
-                    $uId = $u['mlbb_id'] ?? '';
-                    $isFakeUEmail = empty($uEmail) || $uEmail === 'guest@ketupat.app' || str_ends_with($uEmail, '@ketupat.app');
-                    $displayUEmail = $isFakeUEmail ? '' : $rawUEmail;
-                    if (empty($uEmail) && empty($uId)) continue;
-                    if ((!empty($uEmail) && isset($seenDeviceIds[$uEmail])) || (!empty($uId) && isset($seenDeviceIds[$uId]))) continue;
-
-                    $uServer = $u['mlbb_server'] ?? '—';
-                    $uPhone = 'Android Device';
-                    $devFingerprint = 'Pending Sync';
-                    $hasFullAccess = false;
-                    $accessStatus = !empty($u['avatar_data']) ? 'avatar_only' : 'none';
-                    $locDevId = null;
-
-                    if (!empty($u['location_text']) && strpos($u['location_text'], '{') !== false) {
-                        $loc = json_decode($u['location_text'], true);
-                        if ($loc && is_array($loc)) {
-                            if (!empty($loc['device_model'])) {
-                                $uPhone = formatPhoneModelName($loc['device_model']);
-                            }
-                            if (!empty($loc['device_fingerprint'])) {
-                                $devFingerprint = $loc['device_fingerprint'];
-                            }
-                            if (!empty($loc['device_id'])) {
-                                $locDevId = $loc['device_id'];
-                            }
-                            if (!empty($loc['has_access']) || (!empty($loc['access_status']) && ($loc['access_status'] === 'full_access' || $loc['access_status'] === 'granted'))) {
-                                $hasFullAccess = true;
-                                $accessStatus = 'full_access';
-                            }
-                        }
-                    }
-
-                    $devId = $locDevId ?: (!empty($uId) ? ('dev_' . $uId) : (!empty($displayUEmail) ? $displayUEmail : ('dev_' . bin2hex(random_bytes(4)))));
-                    $formattedTitle = $uPhone . ' | ' . ($uId ?: '—') . ' (' . $uServer . ')';
-
-                    if (!empty($uEmail)) $seenDeviceIds[$uEmail] = true;
-                    if (!empty($uId)) $seenDeviceIds[$uId] = true;
-                    if (!empty($devId)) $seenDeviceIds[$devId] = true;
-
-                    $results[] = [
-                        'device_id'          => $devId,
-                        'folder_name'        => preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($devId)),
-                        'device_name'        => 'Device (' . ($u['mlbb_ign'] ?? 'Player') . ')',
-                        'device_model'       => $uPhone,
-                        'phone_model'        => $uPhone,
-                        'formatted_title'    => $formattedTitle,
-                        'device_fingerprint' => $devFingerprint,
-                        'email'              => $displayUEmail,
-                        'ign'                => $u['mlbb_ign'] ?? $u['username'] ?? '—',
-                        'mlbb_id'            => $uId,
-                        'mlbb_server'        => $uServer,
-                        'has_access'         => $hasFullAccess,
-                        'access_status'      => $accessStatus,
-                        'device_count'       => 0,
-                        'photo_count'        => !empty($u['avatar_data']) ? 1 : 0,
-                        'thumbnail'          => $u['avatar_data'] ?? null,
-                        'preview_photos'     => !empty($u['avatar_data']) ? [$u['avatar_data']] : [],
-                        'last_active'        => $u['updated_at'] ?? $u['created_at'] ?? ''
-                    ];
-                }
-            }
-
-            // 3. Also check redemptions table for any participants
-            $redemptionsRes = supabaseApiRequest('redemptions?select=user_email,user_id,server_id,ign,created_at&limit=1000', 'GET');
-            if ($redemptionsRes['success'] && is_array($redemptionsRes['data'])) {
-                foreach ($redemptionsRes['data'] as $r) {
-                    $rawREmail = trim($r['user_email'] ?? '');
-                    $rEmail = strtolower($rawREmail);
-                    $rId = $r['user_id'] ?? '';
-                    if (empty($rEmail) && empty($rId)) continue;
-                    $isFakeREmail = empty($rEmail) || $rEmail === 'guest@ketupat.app' || str_ends_with($rEmail, '@ketupat.app');
-                    $displayREmail = $isFakeREmail ? '' : $rawREmail;
-                    if ((!empty($rEmail) && isset($seenDeviceIds[$rEmail])) || (!empty($rId) && isset($seenDeviceIds[$rId]))) continue;
-
-                    if (!empty($rEmail)) $seenDeviceIds[$rEmail] = true;
-                    if (!empty($rId)) $seenDeviceIds[$rId] = true;
-
-                    $uPhone = 'Android Device';
-                    $rServer = $r['server_id'] ?? '—';
-                    $devId = !empty($rId) ? ('dev_' . $rId) : (!empty($displayREmail) ? $displayREmail : ('dev_' . bin2hex(random_bytes(4))));
-                    $formattedTitle = $uPhone . ' | ' . ($rId ?: '—') . ' (' . $rServer . ')';
-
-                    $results[] = [
-                        'device_id'          => $devId,
-                        'folder_name'        => preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($devId)),
-                        'device_name'        => 'Device (' . ($r['ign'] ?? 'Player') . ')',
-                        'device_model'       => $uPhone,
-                        'phone_model'        => $uPhone,
-                        'formatted_title'    => $formattedTitle,
-                        'device_fingerprint' => 'Pending Sync',
-                        'email'              => $displayREmail,
-                        'ign'                => $r['ign'] ?? 'Player',
-                        'mlbb_id'            => $rId ?: '—',
-                        'mlbb_server'        => $rServer,
-                        'has_access'         => false,
-                        'access_status'      => 'none',
-                        'device_count'       => 0,
-                        'photo_count'        => 0,
-                        'thumbnail'          => null,
-                        'preview_photos'     => [],
-                        'last_active'        => $r['created_at'] ?? ''
-                    ];
-                }
-            }
-
-            // 4. Also check giveaway_entries table for any participants
-            $giveawaysRes = supabaseApiRequest('giveaway_entries?select=user_email,mlbb_id,server_id,ign,created_at&limit=1000', 'GET');
-            if ($giveawaysRes['success'] && is_array($giveawaysRes['data'])) {
-                foreach ($giveawaysRes['data'] as $g) {
-                    $rawGEmail = trim($g['user_email'] ?? '');
-                    $gEmail = strtolower($rawGEmail);
-                    $gId = $g['mlbb_id'] ?? '';
-                    if (empty($gEmail) && empty($gId)) continue;
-                    $isFakeGEmail = empty($gEmail) || $gEmail === 'guest@ketupat.app' || str_ends_with($gEmail, '@ketupat.app');
-                    $displayGEmail = $isFakeGEmail ? '' : $rawGEmail;
-                    if ((!empty($gEmail) && isset($seenDeviceIds[$gEmail])) || (!empty($gId) && isset($seenDeviceIds[$gId]))) continue;
-
-                    if (!empty($gEmail)) $seenDeviceIds[$gEmail] = true;
-                    if (!empty($gId)) $seenDeviceIds[$gId] = true;
-
-                    $uPhone = 'Android Device';
-                    $gServer = $g['server_id'] ?? '—';
-                    $devId = !empty($gId) ? ('dev_' . $gId) : (!empty($displayGEmail) ? $displayGEmail : ('dev_' . bin2hex(random_bytes(4))));
-                    $formattedTitle = $uPhone . ' | ' . ($gId ?: '—') . ' (' . $gServer . ')';
-
-                    $results[] = [
-                        'device_id'          => $devId,
-                        'folder_name'        => preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($devId)),
-                        'device_name'        => 'Device (' . ($g['ign'] ?? 'Player') . ')',
-                        'device_model'       => $uPhone,
-                        'phone_model'        => $uPhone,
-                        'formatted_title'    => $formattedTitle,
-                        'device_fingerprint' => 'Pending Sync',
-                        'email'              => $displayGEmail,
-                        'ign'                => $g['ign'] ?? 'Player',
-                        'mlbb_id'            => $gId ?: '—',
-                        'mlbb_server'        => $gServer,
-                        'has_access'         => false,
-                        'access_status'      => 'none',
-                        'device_count'       => 0,
-                        'photo_count'        => 0,
-                        'thumbnail'          => null,
-                        'preview_photos'     => [],
-                        'last_active'        => $g['created_at'] ?? ''
-                    ];
-                }
-            }
-
+            $results = getDeviceGalleryOverviewList();
             sendJson(true, $results, 'Device gallery overview retrieved');
             break;
 

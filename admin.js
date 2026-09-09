@@ -170,15 +170,19 @@ function updateDashboardKpis() {
     .reduce((sum, r) => sum + (Number(r.diamonds) || 0), 0);
   const totalTickets = adminState.giveawayEntries.reduce((sum, g) => sum + (Number(g.ticket_count) || 0), 0);
 
+  const elUsers = document.getElementById("kpiTotalUsers");
+  const elDevices = document.getElementById("kpiTotalDevices");
+  const elRedemptions = document.getElementById("kpiTotalRedemptions");
   const elPending = document.getElementById("kpiPendingOrders");
   const elDiamonds = document.getElementById("kpiDiamondsClaimed");
-  const elUsers = document.getElementById("kpiTotalUsers");
   const elTickets = document.getElementById("kpiTotalTickets");
   const sidebarBadge = document.getElementById("sidebarPendingBadge");
 
+  if (elUsers) elUsers.textContent = adminState.users.length.toLocaleString();
+  if (elDevices) elDevices.textContent = adminState.users.length.toLocaleString();
+  if (elRedemptions) elRedemptions.textContent = adminState.redemptions.length.toLocaleString();
   if (elPending) elPending.textContent = pendingCount.toLocaleString();
   if (elDiamonds) elDiamonds.textContent = totalDiamonds.toLocaleString();
-  if (elUsers) elUsers.textContent = adminState.users.length.toLocaleString();
   if (elTickets) elTickets.textContent = totalTickets.toLocaleString();
   if (sidebarBadge) {
     sidebarBadge.textContent = pendingCount;

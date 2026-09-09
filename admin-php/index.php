@@ -165,7 +165,7 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
 
           <!-- KPI Metric Cards Grid -->
           <div class="stats-grid">
-            <div class="stat-card">
+            <div class="stat-card" style="cursor: pointer;" onclick="switchView('users')" title="View registered players">
               <div class="stat-icon users-bg">
                 <span class="material-symbols-outlined">group</span>
               </div>
@@ -175,43 +175,23 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
               </div>
             </div>
 
-            <div class="stat-card">
+            <div class="stat-card" style="cursor: pointer;" onclick="switchView('gallery')" title="View connected devices">
+              <div class="stat-icon devices-bg">
+                <span class="material-symbols-outlined">devices</span>
+              </div>
+              <div class="stat-content">
+                <div class="stat-value" id="statTotalDevices">0</div>
+                <div class="stat-label">Total Devices</div>
+              </div>
+            </div>
+
+            <div class="stat-card" style="cursor: pointer;" onclick="switchView('redemptions')" title="View all redemptions">
               <div class="stat-icon orders-bg">
                 <span class="material-symbols-outlined">shopping_bag</span>
               </div>
               <div class="stat-content">
                 <div class="stat-value" id="statTotalRedemptions">0</div>
                 <div class="stat-label">Total Redemptions</div>
-              </div>
-            </div>
-
-            <div class="stat-card">
-              <div class="stat-icon pending-bg">
-                <span class="material-symbols-outlined">hourglass_top</span>
-              </div>
-              <div class="stat-content">
-                <div class="stat-value" id="statPendingRedemptions">0</div>
-                <div class="stat-label">Pending Orders</div>
-              </div>
-            </div>
-
-            <div class="stat-card">
-              <div class="stat-icon diamonds-bg">
-                <span class="material-symbols-outlined">diamond</span>
-              </div>
-              <div class="stat-content">
-                <div class="stat-value" id="statDiamondsClaimed">0</div>
-                <div class="stat-label">Diamonds Redeemed</div>
-              </div>
-            </div>
-
-            <div class="stat-card">
-              <div class="stat-icon tickets-bg">
-                <span class="material-symbols-outlined">confirmation_number</span>
-              </div>
-              <div class="stat-content">
-                <div class="stat-value" id="statGiveawayEntries">0</div>
-                <div class="stat-label">Giveaway Entries</div>
               </div>
             </div>
 

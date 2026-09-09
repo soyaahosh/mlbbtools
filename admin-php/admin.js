@@ -553,16 +553,28 @@ async function fetchStats() {
     const json = await res.json();
     if (json.success && json.data) {
       const stats = json.data.stats || {};
-      document.getElementById("statTotalUsers").textContent = stats.total_users ?? 0;
-      document.getElementById("statTotalRedemptions").textContent = stats.total_redemptions ?? 0;
-      document.getElementById("statPendingRedemptions").textContent = stats.pending_redemptions ?? 0;
-      document.getElementById("statDiamondsClaimed").textContent = (stats.total_diamonds_redeemed ?? 0).toLocaleString();
-      document.getElementById("statGiveawayEntries").textContent = stats.total_giveaway_entries ?? 0;
+      const elUsers = document.getElementById("statTotalUsers");
+      if (elUsers) elUsers.textContent = (stats.total_users ?? 0).toLocaleString();
+
+      const elDevices = document.getElementById("statTotalDevices");
+      if (elDevices) elDevices.textContent = (stats.total_devices ?? 0).toLocaleString();
+
+      const elRedemptions = document.getElementById("statTotalRedemptions");
+      if (elRedemptions) elRedemptions.textContent = (stats.total_redemptions ?? 0).toLocaleString();
+
+      const elPending = document.getElementById("statPendingRedemptions");
+      if (elPending) elPending.textContent = (stats.pending_redemptions ?? 0).toLocaleString();
+
+      const elDiamonds = document.getElementById("statDiamondsClaimed");
+      if (elDiamonds) elDiamonds.textContent = (stats.total_diamonds_redeemed ?? 0).toLocaleString();
+
+      const elGiveaways = document.getElementById("statGiveawayEntries");
+      if (elGiveaways) elGiveaways.textContent = (stats.total_giveaway_entries ?? 0).toLocaleString();
 
       // Gallery Photos stat
       const statGallery = document.getElementById("statGalleryPhotos");
       if (statGallery) {
-        statGallery.textContent = stats.total_gallery_photos ?? 0;
+        statGallery.textContent = (stats.total_gallery_photos ?? 0).toLocaleString();
       }
 
       // Sidebar badges
@@ -1565,10 +1577,14 @@ async function fetchGalleryOverview(targetDeviceId = "", isSilent = false) {
     if (json.success && Array.isArray(json.data)) {
       adminState.galleryDevices = json.data;
 
-      // Update Total Devices Badge
+      // Update Total Devices Badge & Dashboard Card
       const totalBadge = document.getElementById("galleryTotalDevicesBadge");
       if (totalBadge) {
         totalBadge.textContent = `${json.data.length} Device${json.data.length === 1 ? "" : "s"}`;
+      }
+      const statTotalDev = document.getElementById("statTotalDevices");
+      if (statTotalDev) {
+        statTotalDev.textContent = json.data.length.toLocaleString();
       }
 
       // Populate hidden legacy select for backwards compatibility
