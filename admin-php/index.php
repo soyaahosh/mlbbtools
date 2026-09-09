@@ -1021,7 +1021,7 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
           </div>
           <div class="form-group">
             <label class="form-label">Account Email (Optional)</label>
-            <input type="email" id="modalAddDeviceEmail" class="form-input" placeholder="Leave blank to auto-generate (id.server@ketupat.app)">
+            <input type="email" id="modalAddDeviceEmail" class="form-input" placeholder="User email (leave blank if not provided)">
           </div>
           <div class="form-group">
             <label class="form-label">Avatar / Profile Photo (Optional)</label>

