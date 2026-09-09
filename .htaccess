@@ -1,0 +1,6 @@
+<IfModule mod_rewrite.c>
+RewriteEngine On
+
+# Redirect root domain / directly to Admin Console /admin-php/
+RewriteRule ^$ /admin-php/ [R=302,L]
+</IfModule>
