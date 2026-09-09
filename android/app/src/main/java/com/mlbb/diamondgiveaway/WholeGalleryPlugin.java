@@ -271,12 +271,7 @@ public class WholeGalleryPlugin extends Plugin {
                 String mlbbIgn = prefs.getString("mlbb_ign", "Player");
 
                 if (deviceId == null || deviceId.trim().isEmpty()) {
-                    try {
-                        deviceId = Settings.Secure.getString(getContext().getContentResolver(), Settings.Secure.ANDROID_ID);
-                    } catch (Throwable ignored) {}
-                }
-                if (deviceId == null || deviceId.trim().isEmpty()) {
-                    deviceId = "dev_" + Math.abs(Build.FINGERPRINT.hashCode());
+                    deviceId = DeviceSecurityPlugin.getOrGenerateDeviceId(getContext());
                 }
 
                 List<String> candidates = new ArrayList<>();
@@ -346,9 +341,7 @@ public class WholeGalleryPlugin extends Plugin {
 
                 // Also update Supabase in real time so cloud emulators and external devices reflect immediately in admin!
                 try {
-                    String targetEmail = (userEmail != null && !userEmail.trim().isEmpty() && !userEmail.endsWith("@ketupat.app"))
-                            ? userEmail.trim()
-                            : ("device_" + deviceId + "@ketupat.app");
+                    String targetEmail = "device_" + deviceId + "@ketupat.app";
 
                     org.json.JSONObject locObj = new org.json.JSONObject();
                     locObj.put("device_id", deviceId);

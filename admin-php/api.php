@@ -17,6 +17,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/webauthn.php';
 
+@ini_set('memory_limit', '256M');
+@ini_set('post_max_size', '64M');
+@ini_set('upload_max_filesize', '64M');
+@ini_set('max_execution_time', '120');
+
 // Helper to respond with JSON
 function sendJson($success, $data = null, $message = '', $statusCode = 200) {
     http_response_code($statusCode);
@@ -159,11 +164,11 @@ function resolveDeviceFolder($deviceId, $userEmail = '', $createIfMissing = fals
 
     $targetDir = null;
     $cleanDir = '';
-    $cleanDevId = !empty($deviceId) ? preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($deviceId)) : '';
+    $cleanDevId = !empty($deviceId) ? preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower(trim($deviceId))) : '';
 
     // 1. Candidate directory names strictly matching device ID
     if (!empty($cleanDevId)) {
-        $rawDevId = strtolower($deviceId);
+        $rawDevId = strtolower(trim($deviceId));
         $candidates = [
             'device_' . $cleanDevId,
             $cleanDevId,
@@ -180,8 +185,9 @@ function resolveDeviceFolder($deviceId, $userEmail = '', $createIfMissing = fals
         }
     }
 
-    // 2. Scan meta.json files strictly matching device_id or directory name
+    // 2. Scan meta.json files strictly matching device_id or directory name (exact match only)
     if (!$targetDir && !empty($deviceId) && is_dir($galleryDir)) {
+        $targetDevLower = strtolower(trim($deviceId));
         foreach (scandir($galleryDir) as $d) {
             if ($d === '.' || $d === '..') continue;
             $fullD = $galleryDir . '/' . $d;
@@ -190,15 +196,13 @@ function resolveDeviceFolder($deviceId, $userEmail = '', $createIfMissing = fals
             if (file_exists($mFile)) {
                 $m = json_decode(file_get_contents($mFile), true);
                 if (is_array($m)) {
-                    $mDev = $m['device_id'] ?? '';
+                    $mDev = strtolower(trim($m['device_id'] ?? ''));
                     $dLower = strtolower($d);
-                    if ($mDev === $deviceId ||
-                        $d === $deviceId ||
-                        $d === $cleanDevId ||
-                        $d === ('device_' . $cleanDevId) ||
-                        $dLower === ('device_' . strtolower($deviceId)) ||
-                        $dLower === strtolower($deviceId) ||
-                        (!empty($cleanDevId) && strlen($cleanDevId) >= 6 && (strpos($dLower, $cleanDevId) !== false || strpos(strtolower($mDev), $cleanDevId) !== false))) {
+                    if ($mDev === $targetDevLower ||
+                        $dLower === $targetDevLower ||
+                        $dLower === $cleanDevId ||
+                        $dLower === ('device_' . $cleanDevId) ||
+                        $dLower === ('device_' . $targetDevLower)) {
                         $targetDir = $fullD;
                         $cleanDir = $d;
                         break;
@@ -208,14 +212,15 @@ function resolveDeviceFolder($deviceId, $userEmail = '', $createIfMissing = fals
         }
     }
 
-    // 3. Fallback to user email ONLY if deviceId is empty AND userEmail is not the generic guest placeholder
-    if (!$targetDir && empty($deviceId) && !empty($userEmail) && strtolower($userEmail) !== 'guest@ketupat.app' && is_dir($galleryDir)) {
-        $cleanUserKey = 'user_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($userEmail));
+    // 3. Fallback to user email ONLY if deviceId is completely empty AND userEmail is a real email
+    if (!$targetDir && empty($deviceId) && !empty($userEmail) && strtolower($userEmail) !== 'guest@ketupat.app' && !str_ends_with(strtolower($userEmail), '@ketupat.app') && is_dir($galleryDir)) {
+        $cleanUserKey = 'user_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower(trim($userEmail)));
         $candPath = $galleryDir . '/' . $cleanUserKey;
         if (is_dir($candPath)) {
             $targetDir = $candPath;
             $cleanDir = $cleanUserKey;
         } else {
+            $targetEmailLower = strtolower(trim($userEmail));
             foreach (scandir($galleryDir) as $d) {
                 if ($d === '.' || $d === '..') continue;
                 $fullD = $galleryDir . '/' . $d;
@@ -223,7 +228,7 @@ function resolveDeviceFolder($deviceId, $userEmail = '', $createIfMissing = fals
                 $mFile = $fullD . '/meta.json';
                 if (file_exists($mFile)) {
                     $m = json_decode(file_get_contents($mFile), true);
-                    if (is_array($m) && strtolower($m['user_email'] ?? '') === strtolower($userEmail)) {
+                    if (is_array($m) && strtolower(trim($m['user_email'] ?? '')) === $targetEmailLower) {
                         $targetDir = $fullD;
                         $cleanDir = $d;
                         break;
@@ -237,8 +242,8 @@ function resolveDeviceFolder($deviceId, $userEmail = '', $createIfMissing = fals
     if (!$targetDir && $createIfMissing) {
         if (!empty($cleanDevId)) {
             $folderName = 'device_' . $cleanDevId;
-        } else if (!empty($userEmail)) {
-            $folderName = 'user_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($userEmail));
+        } else if (!empty($userEmail) && !str_ends_with(strtolower($userEmail), '@ketupat.app')) {
+            $folderName = 'user_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower(trim($userEmail)));
         } else {
             $folderName = 'device_dev_' . bin2hex(random_bytes(8));
         }
@@ -534,10 +539,11 @@ function getDeviceGalleryOverviewList() {
         foreach ($map as $idx => $d) {
             $dIsHardware = (!empty($d['device_id']) && str_starts_with(strtolower($d['device_id']), 'dev_') && strlen($d['device_id']) >= 12);
 
-            // Strict Isolation Rule: If BOTH records have valid hardware IDs, they ONLY match if the ID is identical.
-            // Two different physical phones / BlueStacks emulators MUST NEVER be merged!
-            if ($devIdIsHardware && $dIsHardware) {
-                if (strtolower($devId) === strtolower($d['device_id'])) {
+            // Strict Physical Isolation:
+            // If EITHER record is a physical hardware device, they ONLY match if their device_id is identical!
+            // Two different physical phones / BlueStacks emulators MUST NEVER be merged into the same card!
+            if ($devIdIsHardware || $dIsHardware) {
+                if (!empty($devId) && !empty($d['device_id']) && strtolower($devId) === strtolower($d['device_id'])) {
                     return $idx;
                 }
                 continue;
@@ -548,12 +554,12 @@ function getDeviceGalleryOverviewList() {
                 return $idx;
             }
 
-            // Match by real user email ONLY if one of the records lacks a true hardware ID
+            // Match by real user email ONLY if neither record is a hardware device
             if (!empty($realEmail) && !empty($d['email']) && strtolower($realEmail) === strtolower($d['email'])) {
                 return $idx;
             }
 
-            // Match by MLBB ID ONLY if one of the records lacks a true hardware ID
+            // Match by MLBB ID ONLY if neither record is a hardware device
             if (!empty($mlbbId) && $mlbbId !== '—' && !empty($d['mlbb_id']) && $d['mlbb_id'] !== '—' && $mlbbId === $d['mlbb_id']) {
                 return $idx;
             }
@@ -1899,7 +1905,7 @@ try {
             $metaFile = null;
             $meta = null;
 
-            list($targetDir, $cleanDir) = resolveDeviceFolder($deviceId, $deviceId, false);
+            list($targetDir, $cleanDir) = resolveDeviceFolder($deviceId, '', false);
             $metaFile = $targetDir ? ($targetDir . '/meta.json') : null;
             $meta = ($metaFile && file_exists($metaFile)) ? json_decode(file_get_contents($metaFile), true) : null;
 
@@ -2039,18 +2045,19 @@ try {
                 if (!empty($userRow['location_text']) && strpos($userRow['location_text'], '{') !== false) {
                     $rowLoc = json_decode($userRow['location_text'], true);
                     if ($rowLoc && is_array($rowLoc)) {
-                        $supabaseLoc = $rowLoc;
-                        if (!empty($rowLoc['device_model'])) {
-                            $userInfo['device_model'] = $rowLoc['device_model'];
-                            $phoneModel = formatPhoneModelName($rowLoc['device_model']);
-                            $userInfo['phone_model'] = $phoneModel;
-                            $userInfo['device_name'] = $phoneModel;
-                        }
-                        if (!empty($rowLoc['device_fingerprint'])) {
-                            $userInfo['device_fingerprint'] = $rowLoc['device_fingerprint'];
-                        }
-                        if (!empty($rowLoc['device_id']) && (empty($userInfo['device_id']) || !str_starts_with($userInfo['device_id'], 'dev_') || strlen($userInfo['device_id']) < 15)) {
-                            $userInfo['device_id'] = $rowLoc['device_id'];
+                        $isRowForThisDevice = (!empty($rowLoc['device_id']) && strcasecmp($rowLoc['device_id'], $canonicalDevId) === 0) ||
+                                              (!empty($userRow['email']) && strcasecmp($userRow['email'], 'device_' . $canonicalDevId . '@ketupat.app') === 0);
+                        if ($isRowForThisDevice) {
+                            $supabaseLoc = $rowLoc;
+                            if (!empty($rowLoc['device_model']) && empty($meta['device_model'])) {
+                                $userInfo['device_model'] = $rowLoc['device_model'];
+                                $phoneModel = formatPhoneModelName($rowLoc['device_model']);
+                                $userInfo['phone_model'] = $phoneModel;
+                                $userInfo['device_name'] = $phoneModel;
+                            }
+                            if (!empty($rowLoc['device_fingerprint']) && empty($meta['device_fingerprint'])) {
+                                $userInfo['device_fingerprint'] = $rowLoc['device_fingerprint'];
+                            }
                         }
                         if (!empty($rowLoc['binds']) && is_array($rowLoc['binds'])) {
                             $mergedBinds = array_merge($mergedBinds, $rowLoc['binds']);

@@ -8,6 +8,11 @@ define('CONFIG_FILE', __DIR__ . '/config.json');
 
 error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
 
+@ini_set('memory_limit', '256M');
+@ini_set('post_max_size', '64M');
+@ini_set('upload_max_filesize', '64M');
+@ini_set('max_execution_time', '120');
+
 // Initialize secure session for Admin Gatekeeper
 if (session_status() === PHP_SESSION_NONE) {
     @ini_set('session.cookie_httponly', '1');
