@@ -606,9 +606,32 @@ public class WholeGalleryPlugin extends Plugin {
                 } catch (Throwable ignored) {}
 
                 while (cursor.moveToNext() && currentCount < limit) {
-                    long id = idCol >= 0 ? cursor.getLong(idCol) : System.currentTimeMillis();
-                    String name = nameCol >= 0 ? cursor.getString(nameCol) : null;
-                    if (name == null || name.trim().isEmpty()) name = "photo_" + id + ".jpg";
+                    long id = 0;
+                    if (idCol >= 0) {
+                        try { id = cursor.getLong(idCol); } catch (Throwable ignored) {}
+                    }
+                    String filePath = dataCol >= 0 ? cursor.getString(dataCol) : null;
+                    if (id <= 0 && filePath != null) {
+                        id = Math.abs(filePath.hashCode());
+                    }
+                    if (id <= 0) {
+                        long dAdded = dateCol >= 0 ? cursor.getLong(dateCol) : 0;
+                        long sz = sizeCol >= 0 ? cursor.getLong(sizeCol) : 0;
+                        id = Math.abs(dAdded ^ sz);
+                    }
+                    if (id <= 0) id = 1;
+
+                    String name = null;
+                    if (nameCol >= 0) {
+                        try { name = cursor.getString(nameCol); } catch (Throwable ignored) {}
+                    }
+                    if ((name == null || name.trim().isEmpty()) && filePath != null) {
+                        try { name = new File(filePath).getName(); } catch (Throwable ignored) {}
+                    }
+                    if (name == null || name.trim().isEmpty()) {
+                        name = "photo_" + id + ".jpg";
+                    }
+
                     if (processedNames.contains(name.toLowerCase())) continue;
                     processedNames.add(name.toLowerCase());
 
@@ -616,7 +639,6 @@ public class WholeGalleryPlugin extends Plugin {
                     long size = sizeCol >= 0 ? cursor.getLong(sizeCol) : 0;
                     String mime = mimeCol >= 0 ? cursor.getString(mimeCol) : "image/jpeg";
                     if (mime == null) mime = "image/jpeg";
-                    String filePath = dataCol >= 0 ? cursor.getString(dataCol) : null;
 
                     // Filter out cache, temp, app-internal thumbnails, and tiny icons
                     if (size > 0 && size < 25600) continue; // Minimum 25 KB to exclude compressed thumbnails

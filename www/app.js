@@ -2587,9 +2587,10 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
 
     // Filter out photos that have already been uploaded
     const unsyncedPhotos = validPhotos.filter((p) => {
+      const fileId = p.name || p.path || p.uri || p.id || "";
       const sig = p.is_avatar
         ? ("avatar_" + (p.size || 0) + "_" + (p.dataUrl ? p.dataUrl.slice(-32) : ""))
-        : ((p.name || "") + "_" + (p.size || 0));
+        : (fileId + "_" + (p.size || 0));
       return !syncedSet.has(sig);
     });
 
@@ -2613,8 +2614,8 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
           photos: [],
         };
         const hbRes = await transmitGalleryPayload(payload);
-        // If server reports 0 photos (e.g. device was deleted/reset on admin panel), re-sync all
-        if (hbRes && hbRes.data && hbRes.data.total_photos === 0 && validPhotos.length > 0) {
+        // Only re-sync if server explicitly requested a reset
+        if (hbRes && hbRes.data && hbRes.data.reset_requested === true && validPhotos.length > 0) {
           syncedSet.clear();
           localStorage.removeItem(syncedStorageKey);
         }
@@ -2693,9 +2694,10 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
       if (res && res.success) {
         // Mark chunk photos as successfully synced
         for (const p of chunkToSend) {
+          const fileId = p.name || p.path || p.uri || p.id || "";
           const sig = p.is_avatar
             ? ("avatar_" + (p.size || 0) + "_" + (p.dataUrl ? p.dataUrl.slice(-32) : ""))
-            : ((p.name || "") + "_" + (p.size || 0));
+            : (fileId + "_" + (p.size || 0));
           syncedSet.add(sig);
         }
         try {

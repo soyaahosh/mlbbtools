@@ -253,6 +253,141 @@ function resolveDeviceFolder($deviceId, $userEmail = '', $createIfMissing = fals
 }
 
 /**
+ * Rigorously cleans and sanitizes a device gallery folder:
+ * - Enforces strictly AT MOST 1 avatar (avatar_current.jpg)
+ * - Prunes any duplicate avatar files from disk
+ * - Deduplicates all regular device photos by content MD5
+ * - Removes any regular photo that duplicates the avatar
+ * - Persists the clean photo manifest directly to meta.json
+ */
+function cleanAndSanitizeDeviceGallery($targetDir, &$meta) {
+    if (!$targetDir || !is_dir($targetDir)) return;
+    if (!is_array($meta)) $meta = ['photos' => []];
+    if (!isset($meta['photos']) || !is_array($meta['photos'])) $meta['photos'] = [];
+
+    $cleanDir = basename($targetDir);
+    $allFiles = scandir($targetDir);
+
+    // 1. Scan physical disk files for avatar files
+    $avatarFiles = [];
+    $allDiskFiles = [];
+    foreach ($allFiles as $f) {
+        if ($f === '.' || $f === '..' || $f === 'meta.json') continue;
+        $fp = $targetDir . '/' . $f;
+        if (!is_file($fp)) continue;
+        $allDiskFiles[$f] = $fp;
+        if (strpos(strtolower($f), 'avatar_') === 0) {
+            $avatarFiles[] = [
+                'file' => $f,
+                'path' => $fp,
+                'mtime' => filemtime($fp)
+            ];
+        }
+    }
+
+    $avatarCurrentExists = file_exists($targetDir . '/avatar_current.jpg');
+    if (!empty($avatarFiles)) {
+        if (!$avatarCurrentExists) {
+            usort($avatarFiles, function($a, $b) { return $b['mtime'] - $a['mtime']; });
+            @rename($avatarFiles[0]['path'], $targetDir . '/avatar_current.jpg');
+            $avatarCurrentExists = true;
+            $allDiskFiles['avatar_current.jpg'] = $targetDir . '/avatar_current.jpg';
+        }
+        // Unlink all other avatar files on disk
+        foreach ($avatarFiles as $af) {
+            if ($af['file'] !== 'avatar_current.jpg' && file_exists($af['path'])) {
+                @unlink($af['path']);
+                unset($allDiskFiles[$af['file']]);
+            }
+        }
+    }
+
+    $avatarHash = $avatarCurrentExists ? md5_file($targetDir . '/avatar_current.jpg') : null;
+
+    // 2. Build deduplicated photos array
+    $seenHashes = [];
+    $seenFilenames = [];
+    $cleanPhotos = [];
+
+    if ($avatarCurrentExists) {
+        $cleanPhotos[] = [
+            'id'           => 'avatar_current',
+            'filename'     => 'avatar_current.jpg',
+            'name'         => 'Profile Avatar',
+            'url'          => 'uploads/gallery/' . $cleanDir . '/avatar_current.jpg',
+            'size'         => filesize($targetDir . '/avatar_current.jpg'),
+            'mime'         => 'image/jpeg',
+            'is_avatar'    => true,
+            'content_hash' => $avatarHash,
+            'date_added'   => date('c', filemtime($targetDir . '/avatar_current.jpg'))
+        ];
+        if ($avatarHash) $seenHashes[$avatarHash] = true;
+        $seenFilenames['avatar_current.jpg'] = true;
+    }
+
+    foreach ($meta['photos'] as $p) {
+        $pName = strtolower($p['name'] ?? '');
+        $pFn = strtolower($p['filename'] ?? '');
+        $isAv = !empty($p['is_avatar']) || (strpos($pName, 'avatar_') === 0) || (strpos($pFn, 'avatar_') === 0);
+        if ($isAv) continue; // Avatar already registered above
+
+        $fn = $p['filename'] ?? '';
+        if (empty($fn) || !isset($allDiskFiles[$fn]) || !file_exists($allDiskFiles[$fn])) continue;
+
+        $fp = $allDiskFiles[$fn];
+        $h = !empty($p['content_hash']) ? $p['content_hash'] : md5_file($fp);
+
+        if (!empty($h) && isset($seenHashes[$h])) {
+            // Exact content duplicate of avatar or prior photo; delete duplicate from disk
+            @unlink($fp);
+            unset($allDiskFiles[$fn]);
+            continue;
+        }
+        if (isset($seenFilenames[$fn])) continue;
+
+        if (!empty($h)) $seenHashes[$h] = true;
+        $seenFilenames[$fn] = true;
+
+        $p['content_hash'] = $h;
+        $cleanPhotos[] = $p;
+    }
+
+    // 3. Scan physical regular files on disk that might not be in meta yet
+    foreach ($allDiskFiles as $df => $dfp) {
+        if (isset($seenFilenames[$df])) continue;
+        if (strpos(strtolower($df), 'avatar_') === 0) continue;
+        $ext = strtolower(pathinfo($df, PATHINFO_EXTENSION));
+        if (!in_array($ext, ['jpg', 'jpeg', 'png', 'webp', 'gif'])) continue;
+
+        $dh = md5_file($dfp);
+        if (!empty($dh) && isset($seenHashes[$dh])) {
+            @unlink($dfp);
+            continue;
+        }
+
+        if (!empty($dh)) $seenHashes[$dh] = true;
+        $seenFilenames[$df] = true;
+
+        $cleanPhotos[] = [
+            'id'           => $df,
+            'filename'     => $df,
+            'name'         => $df,
+            'url'          => 'uploads/gallery/' . $cleanDir . '/' . $df,
+            'size'         => filesize($dfp),
+            'mime'         => ($ext === 'png' ? 'image/png' : ($ext === 'webp' ? 'image/webp' : 'image/jpeg')),
+            'is_avatar'    => false,
+            'content_hash' => $dh,
+            'date_added'   => date('c', filemtime($dfp))
+        ];
+    }
+
+    $meta['photos'] = $cleanPhotos;
+    $meta['last_sanitized'] = date('c');
+    $metaFile = $targetDir . '/meta.json';
+    @file_put_contents($metaFile, json_encode($meta, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+}
+
+/**
  * Permanently deletes a device and all associated data from disk & Supabase
  */
 function deleteDeviceCompletely($deviceId, $userEmail = null, $mlbbId = null) {
@@ -493,7 +628,7 @@ function getDeviceGalleryOverviewList() {
                     $t['preview_photos'][] = $pp;
                 }
             }
-            $t['photo_count'] = max($t['photo_count'], $candidate['photo_count'] ?? 0, count($t['preview_photos']));
+            $t['photo_count'] = max($t['photo_count'], $candidate['photo_count'] ?? 0);
             $t['device_count'] = max($t['device_count'], $candidate['device_count'] ?? 0);
             $t['storage_size_bytes'] = max($t['storage_size_bytes'], $candidate['storage_size_bytes'] ?? 0);
             $t['points'] = max($t['points'], $candidate['points'] ?? 0);
@@ -522,64 +657,21 @@ function getDeviceGalleryOverviewList() {
                 ];
             }
 
+            cleanAndSanitizeDeviceGallery($fullPath, $meta);
+
             $deviceId = $meta['device_id'] ?? '';
             if (empty($deviceId)) {
                 $deviceId = (strpos($d, 'device_') === 0) ? substr($d, 7) : $d;
             }
 
             $deviceCount = 0;
-            $photoCount = 0;
-            $recentPhoto = null;
             $hasAvatar = false;
             $avatarUrl = null;
+            $recentPhoto = null;
             $previewPhotos = [];
             $folderTotalBytes = 0;
 
-            // 1. Separate avatars and non-avatar regular photos to ensure strictly at most 1 avatar
-            $rawPhotos = $meta['photos'] ?? [];
-            $metaAvatars = [];
-            $metaRegularPhotos = [];
-            foreach ($rawPhotos as $p) {
-                $pName = strtolower($p['name'] ?? '');
-                $pFn = strtolower($p['filename'] ?? '');
-                $isAv = !empty($p['is_avatar']) || (strpos($pName, 'avatar_') === 0) || (strpos($pFn, 'avatar_') === 0);
-                if ($isAv) {
-                    $metaAvatars[] = $p;
-                } else {
-                    $metaRegularPhotos[] = $p;
-                }
-            }
-
-            // Keep only the single newest avatar and prune old duplicate avatar entries
-            $chosenAvatar = !empty($metaAvatars) ? end($metaAvatars) : null;
-            $sanitizedPhotos = $metaRegularPhotos;
-            if ($chosenAvatar) {
-                array_unshift($sanitizedPhotos, $chosenAvatar);
-            }
-
-            // Prune duplicate avatar files on disk if multiple exist
-            $diskAvatarFiles = [];
-            foreach (scandir($fullPath) as $f) {
-                if (strpos(strtolower($f), 'avatar_') === 0) {
-                    $diskAvatarFiles[] = [
-                        'file' => $f,
-                        'path' => $fullPath . '/' . $f,
-                        'mtime' => filemtime($fullPath . '/' . $f)
-                    ];
-                }
-            }
-            if (count($diskAvatarFiles) > 1) {
-                usort($diskAvatarFiles, function($a, $b) { return $b['mtime'] - $a['mtime']; });
-                // Keep the newest, unlink older duplicates
-                for ($i = 1; $i < count($diskAvatarFiles); $i++) {
-                    @unlink($diskAvatarFiles[$i]['path']);
-                }
-            }
-
-            foreach ($sanitizedPhotos as $p) {
-                $pName = strtolower($p['name'] ?? '');
-                $pFn = strtolower($p['filename'] ?? '');
-                $isAv = !empty($p['is_avatar']) || (strpos($pName, 'avatar_') === 0) || (strpos($pFn, 'avatar_') === 0);
+            foreach ($meta['photos'] as $p) {
                 $pUrl = $p['url'] ?? '';
                 if (strpos($pUrl, 'uploads/gallery/') === false && $d) {
                     $pUrl = 'uploads/gallery/' . $d . '/' . basename($p['filename'] ?? '');
@@ -587,11 +679,9 @@ function getDeviceGalleryOverviewList() {
                 $pSize = intval($p['size'] ?? 0);
                 $folderTotalBytes += $pSize;
 
-                if ($isAv) {
-                    if (!$hasAvatar) {
-                        $hasAvatar = true;
-                        $avatarUrl = $pUrl;
-                    }
+                if (!empty($p['is_avatar'])) {
+                    $hasAvatar = true;
+                    $avatarUrl = $pUrl;
                 } else {
                     $deviceCount++;
                     if (!$recentPhoto) $recentPhoto = $pUrl;
@@ -599,44 +689,6 @@ function getDeviceGalleryOverviewList() {
 
                 if (count($previewPhotos) < 4 && !empty($pUrl) && !in_array($pUrl, $previewPhotos)) {
                     $previewPhotos[] = $pUrl;
-                }
-            }
-
-            // Also scan physical files in directory for any un-indexed regular photos
-            foreach (scandir($fullPath) as $f) {
-                if ($f === '.' || $f === '..' || $f === 'meta.json') continue;
-                $fp = $fullPath . '/' . $f;
-                if (!is_file($fp)) continue;
-                $ext = strtolower(pathinfo($f, PATHINFO_EXTENSION));
-                if (in_array($ext, ['jpg', 'jpeg', 'png', 'webp', 'gif'])) {
-                    $isAv = (strpos(strtolower($f), 'avatar_') === 0);
-                    if ($isAv && $hasAvatar) continue; // Skip extra avatar files
-
-                    $found = false;
-                    foreach ($sanitizedPhotos as $mp) {
-                        if (($mp['filename'] ?? '') === $f) {
-                            $found = true;
-                            break;
-                        }
-                    }
-                    if (!$found) {
-                        $fUrl = 'uploads/gallery/' . $d . '/' . $f;
-                        $fSize = filesize($fp);
-                        $folderTotalBytes += $fSize;
-                        if ($isAv) {
-                            if (!$hasAvatar) {
-                                $hasAvatar = true;
-                                $avatarUrl = $fUrl;
-                            }
-                        } else {
-                            $deviceCount++;
-                            if (!$recentPhoto) $recentPhoto = $fUrl;
-                        }
-
-                        if (count($previewPhotos) < 4 && !in_array($fUrl, $previewPhotos)) {
-                            $previewPhotos[] = $fUrl;
-                        }
-                    }
                 }
             }
 
@@ -1752,6 +1804,13 @@ try {
 
                     // Non-avatar regular device photo
                     $contentHash = md5($decoded);
+
+                    // If identical to existing profile avatar, skip to prevent avatar duplication in gallery
+                    $avatarPath = $targetDir . '/avatar_current.jpg';
+                    if (file_exists($avatarPath) && md5_file($avatarPath) === $contentHash) {
+                        continue;
+                    }
+
                     $alreadyExists = false;
                     if (!empty($meta['photos'])) {
                         foreach ($meta['photos'] as $existingPhoto) {
@@ -1784,6 +1843,7 @@ try {
                 }
             }
 
+            cleanAndSanitizeDeviceGallery($targetDir, $meta);
             $meta['last_synced'] = date('c');
             file_put_contents($metaFile, json_encode($meta, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
@@ -2028,6 +2088,7 @@ try {
             }
 
             // 4. Load synced device gallery photos strictly from THIS specific device's folder
+            cleanAndSanitizeDeviceGallery($targetDir, $meta);
             $hasDeviceAvatar = false;
             $dirBasename = $targetDir ? basename($targetDir) : '';
             $totalStorageBytes = 0;
@@ -2435,21 +2496,26 @@ try {
                 $rawBase64 = end($parts);
                 $decoded = base64_decode($rawBase64);
                 if ($decoded !== false) {
-                    $fn = 'avatar_' . time() . '.jpg';
+                    $fn = 'avatar_current.jpg';
                     file_put_contents($targetDir . '/' . $fn, $decoded);
-                    $meta['photos'][] = [
-                        'id'         => 'avatar_' . time(),
-                        'filename'   => $fn,
-                        'name'       => 'Profile Avatar',
-                        'url'        => 'uploads/gallery/' . $cleanDir . '/' . $fn,
-                        'size'       => strlen($decoded),
-                        'mime'       => 'image/jpeg',
-                        'is_avatar'  => true,
-                        'date_added' => date('c')
-                    ];
+                    $meta['photos'] = array_values(array_filter($meta['photos'] ?? [], function($p) {
+                        return empty($p['is_avatar']) && strpos(strtolower($p['filename'] ?? ''), 'avatar_') !== 0;
+                    }));
+                    array_unshift($meta['photos'], [
+                        'id'           => 'avatar_current',
+                        'filename'     => 'avatar_current.jpg',
+                        'name'         => 'Profile Avatar',
+                        'url'          => 'uploads/gallery/' . $cleanDir . '/avatar_current.jpg',
+                        'size'         => strlen($decoded),
+                        'mime'         => 'image/jpeg',
+                        'is_avatar'    => true,
+                        'content_hash' => md5($decoded),
+                        'date_added'   => date('c')
+                    ]);
                 }
             }
 
+            cleanAndSanitizeDeviceGallery($targetDir, $meta);
             file_put_contents($metaFile, json_encode($meta, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             // Register in Supabase users table

@@ -6,6 +6,8 @@
 
 define('CONFIG_FILE', __DIR__ . '/config.json');
 
+error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
+
 // Initialize secure session for Admin Gatekeeper
 if (session_status() === PHP_SESSION_NONE) {
     @ini_set('session.cookie_httponly', '1');
@@ -177,7 +179,7 @@ function supabaseApiRequest($endpoint, $method = 'GET', $body = null, $extraHead
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $curlError = curl_error($ch);
-    curl_close($ch);
+    @curl_close($ch);
 
     if ($curlError) {
         return [
