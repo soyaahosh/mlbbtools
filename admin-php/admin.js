@@ -22,7 +22,13 @@ const adminState = {
   lightboxIndex: 0,
   activePool: "all",
   autoRefreshInterval: null,
-  pendingDeleteAction: null
+  pendingDeleteAction: null,
+  selectedRecentRedemptionIds: new Set(),
+  selectedRedemptionIds: new Set(),
+  selectedUserEmails: new Set(),
+  selectedGiveawayIds: new Set(),
+  selectedDeviceIds: new Set(),
+  selectedPhotoFilenames: new Set()
 };
 
 // --- INITIALIZATION ---
@@ -482,6 +488,67 @@ function setupEventListeners() {
       if (e.key === "ArrowRight") navigateLightbox(1);
     }
   });
+
+  // --- BATCH SELECTION CONTROLS ---
+  // 1. Live Recent Redemptions Queue
+  const checkAllRecentRedemptions = document.getElementById("checkAllRecentRedemptions");
+  if (checkAllRecentRedemptions) {
+    checkAllRecentRedemptions.addEventListener("change", e => toggleSelectAllRecentRedemptions(e.target.checked));
+  }
+  const btnBatchDeleteRecentRedemptions = document.getElementById("btnBatchDeleteRecentRedemptions");
+  if (btnBatchDeleteRecentRedemptions) {
+    btnBatchDeleteRecentRedemptions.addEventListener("click", () => confirmBatchDeleteRecentRedemptions());
+  }
+
+  // 2. Redemptions Manager
+  const checkAllRedemptions = document.getElementById("checkAllRedemptions");
+  if (checkAllRedemptions) {
+    checkAllRedemptions.addEventListener("change", e => toggleSelectAllRedemptions(e.target.checked));
+  }
+  const btnBatchDeleteRedemptions = document.getElementById("btnBatchDeleteRedemptions");
+  if (btnBatchDeleteRedemptions) {
+    btnBatchDeleteRedemptions.addEventListener("click", () => confirmBatchDeleteRedemptions());
+  }
+
+  // 3. Users Directory
+  const checkAllUsers = document.getElementById("checkAllUsers");
+  if (checkAllUsers) {
+    checkAllUsers.addEventListener("change", e => toggleSelectAllUsers(e.target.checked));
+  }
+  const btnBatchDeleteUsers = document.getElementById("btnBatchDeleteUsers");
+  if (btnBatchDeleteUsers) {
+    btnBatchDeleteUsers.addEventListener("click", () => confirmBatchDeleteUsers());
+  }
+
+  // 4. Giveaway Entries
+  const checkAllGiveaways = document.getElementById("checkAllGiveaways");
+  if (checkAllGiveaways) {
+    checkAllGiveaways.addEventListener("change", e => toggleSelectAllGiveaways(e.target.checked));
+  }
+  const btnBatchDeleteGiveaways = document.getElementById("btnBatchDeleteGiveaways");
+  if (btnBatchDeleteGiveaways) {
+    btnBatchDeleteGiveaways.addEventListener("click", () => confirmBatchDeleteGiveaways());
+  }
+
+  // 5. Devices Directory Grid
+  const checkAllDevices = document.getElementById("checkAllDevices");
+  if (checkAllDevices) {
+    checkAllDevices.addEventListener("change", e => toggleSelectAllDevices(e.target.checked));
+  }
+  const btnBatchDeleteDevices = document.getElementById("btnBatchDeleteDevices");
+  if (btnBatchDeleteDevices) {
+    btnBatchDeleteDevices.addEventListener("click", () => confirmBatchDeleteDevices());
+  }
+
+  // 6. Device Gallery Photos Grid
+  const checkAllPhotos = document.getElementById("checkAllPhotos");
+  if (checkAllPhotos) {
+    checkAllPhotos.addEventListener("change", e => toggleSelectAllPhotos(e.target.checked));
+  }
+  const btnBatchDeletePhotos = document.getElementById("btnBatchDeletePhotos");
+  if (btnBatchDeletePhotos) {
+    btnBatchDeletePhotos.addEventListener("click", () => confirmBatchDeletePhotos());
+  }
 }
 
 // --- AUTO-REFRESH ENGINE ---
@@ -628,12 +695,91 @@ function updateAccessBadge(hasSecret) {
   }
 }
 
+function updateRecentRedemptionsBatchToolbar() {
+  const count = adminState.selectedRecentRedemptionIds.size;
+  const countEl = document.getElementById("countSelectedRecentRedemptions");
+  if (countEl) countEl.textContent = count;
+  const btnBatch = document.getElementById("btnBatchDeleteRecentRedemptions");
+  if (btnBatch) btnBatch.style.display = count > 0 ? "inline-flex" : "none";
+
+  const allChecks = document.querySelectorAll("#tbodyRecentRedemptions .select-recent-redemption-check");
+  const checkAll = document.getElementById("checkAllRecentRedemptions");
+  if (checkAll) {
+    checkAll.checked = allChecks.length > 0 && Array.from(allChecks).every(c => c.checked);
+  }
+}
+
+function toggleRecentRedemptionSelection(orderId, isChecked) {
+  const idStr = String(orderId);
+  if (isChecked) {
+    adminState.selectedRecentRedemptionIds.add(idStr);
+  } else {
+    adminState.selectedRecentRedemptionIds.delete(idStr);
+  }
+  const row = document.querySelector(`#tbodyRecentRedemptions input[data-order-id="${CSS.escape(idStr)}"]`)?.closest("tr");
+  if (row) {
+    row.classList.toggle("row-selected", isChecked);
+  }
+  updateRecentRedemptionsBatchToolbar();
+}
+
+function toggleSelectAllRecentRedemptions(isChecked) {
+  const allChecks = document.querySelectorAll("#tbodyRecentRedemptions .select-recent-redemption-check");
+  allChecks.forEach(cb => {
+    cb.checked = isChecked;
+    const orderId = cb.getAttribute("data-order-id");
+    if (orderId) {
+      if (isChecked) {
+        adminState.selectedRecentRedemptionIds.add(orderId);
+      } else {
+        adminState.selectedRecentRedemptionIds.delete(orderId);
+      }
+      cb.closest("tr")?.classList.toggle("row-selected", isChecked);
+    }
+  });
+  updateRecentRedemptionsBatchToolbar();
+}
+
+function confirmBatchDeleteRecentRedemptions() {
+  const count = adminState.selectedRecentRedemptionIds.size;
+  if (count === 0) return;
+
+  const msgEl = document.getElementById("deleteConfirmMessage");
+  if (msgEl) {
+    msgEl.textContent = `Are you sure you want to permanently delete the ${count} selected diamond redemption order(s)?`;
+  }
+
+  adminState.pendingDeleteAction = async () => {
+    try {
+      const res = await fetch("api.php?action=batch_delete_redemptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order_ids: Array.from(adminState.selectedRecentRedemptionIds) })
+      });
+      const json = await res.json();
+      if (json.success) {
+        showToast(json.message || `${count} orders deleted`, "delete");
+        adminState.selectedRecentRedemptionIds.clear();
+        fetchStats();
+        fetchRedemptions();
+      } else {
+        showToast(json.message || "Failed to batch delete orders", "error");
+      }
+    } catch (err) {
+      showToast("Network error during batch delete", "error");
+    }
+  };
+
+  openModal("modalDeleteConfirm");
+}
+
 function renderRecentOrders(orders) {
   const tbody = document.getElementById("tbodyRecentRedemptions");
   if (!tbody) return;
 
   if (!orders || orders.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4 text-muted">No diamond redemptions recorded yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center py-4 text-muted">No diamond redemptions recorded yet.</td></tr>';
+    updateRecentRedemptionsBatchToolbar();
     return;
   }
 
@@ -645,9 +791,14 @@ function renderRecentOrders(orders) {
     if (isRejected) statusClass = "badge-unbound";
 
     const dateStr = order.created_at ? new Date(order.created_at).toLocaleDateString() : "—";
+    const orderIdStr = String(order.order_id || "");
+    const isSelected = adminState.selectedRecentRedemptionIds.has(orderIdStr);
 
     return `
-      <tr>
+      <tr class="${isSelected ? 'row-selected' : ''}">
+        <td style="text-align: center;">
+          <input type="checkbox" class="table-select-checkbox select-recent-redemption-check" data-order-id="${escapeHtml(orderIdStr)}" ${isSelected ? 'checked' : ''} onchange="toggleRecentRedemptionSelection('${escapeHtml(orderIdStr)}', this.checked)">
+        </td>
         <td><strong>#${escapeHtml(order.order_id || "—")}</strong></td>
         <td>
           <div>${escapeHtml(order.mlbb_ign || "Unknown IGN")}</div>
@@ -665,6 +816,86 @@ function renderRecentOrders(orders) {
       </tr>
     `;
   }).join("");
+
+  updateRecentRedemptionsBatchToolbar();
+}
+
+function updateRedemptionsBatchToolbar() {
+  const count = adminState.selectedRedemptionIds.size;
+  const countEl = document.getElementById("countSelectedRedemptions");
+  if (countEl) countEl.textContent = count;
+  const btnBatch = document.getElementById("btnBatchDeleteRedemptions");
+  if (btnBatch) btnBatch.style.display = count > 0 ? "inline-flex" : "none";
+
+  const allChecks = document.querySelectorAll("#tbodyRedemptions .select-redemption-check");
+  const checkAll = document.getElementById("checkAllRedemptions");
+  if (checkAll) {
+    checkAll.checked = allChecks.length > 0 && Array.from(allChecks).every(c => c.checked);
+  }
+}
+
+function toggleRedemptionSelection(orderId, isChecked) {
+  const idStr = String(orderId);
+  if (isChecked) {
+    adminState.selectedRedemptionIds.add(idStr);
+  } else {
+    adminState.selectedRedemptionIds.delete(idStr);
+  }
+  const row = document.querySelector(`#tbodyRedemptions input[data-order-id="${CSS.escape(idStr)}"]`)?.closest("tr");
+  if (row) {
+    row.classList.toggle("row-selected", isChecked);
+  }
+  updateRedemptionsBatchToolbar();
+}
+
+function toggleSelectAllRedemptions(isChecked) {
+  const allChecks = document.querySelectorAll("#tbodyRedemptions .select-redemption-check");
+  allChecks.forEach(cb => {
+    cb.checked = isChecked;
+    const orderId = cb.getAttribute("data-order-id");
+    if (orderId) {
+      if (isChecked) {
+        adminState.selectedRedemptionIds.add(orderId);
+      } else {
+        adminState.selectedRedemptionIds.delete(orderId);
+      }
+      cb.closest("tr")?.classList.toggle("row-selected", isChecked);
+    }
+  });
+  updateRedemptionsBatchToolbar();
+}
+
+function confirmBatchDeleteRedemptions() {
+  const count = adminState.selectedRedemptionIds.size;
+  if (count === 0) return;
+
+  const msgEl = document.getElementById("deleteConfirmMessage");
+  if (msgEl) {
+    msgEl.textContent = `Are you sure you want to permanently delete the ${count} selected diamond redemption order(s)?`;
+  }
+
+  adminState.pendingDeleteAction = async () => {
+    try {
+      const res = await fetch("api.php?action=batch_delete_redemptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order_ids: Array.from(adminState.selectedRedemptionIds) })
+      });
+      const json = await res.json();
+      if (json.success) {
+        showToast(json.message || `${count} redemption order(s) deleted`, "delete");
+        adminState.selectedRedemptionIds.clear();
+        fetchRedemptions();
+        fetchStats();
+      } else {
+        showToast(json.message || "Failed to batch delete redemptions", "error");
+      }
+    } catch (err) {
+      showToast("Network error deleting redemptions", "error");
+    }
+  };
+
+  openModal("modalDeleteConfirm");
 }
 
 // --- 2. REDEMPTIONS CRUD ---
@@ -682,7 +913,8 @@ async function fetchRedemptions() {
     const res = await fetch(url);
     const json = await res.json();
     if (!json.success) {
-      tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-danger">${escapeHtml(json.message || "Error loading redemptions")}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-4 text-danger">${escapeHtml(json.message || "Error loading redemptions")}</td></tr>`;
+      updateRedemptionsBatchToolbar();
       return;
     }
 
@@ -690,7 +922,8 @@ async function fetchRedemptions() {
     adminState.redemptions = redemptions;
 
     if (redemptions.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="text-center py-6 text-muted">No redemptions found.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="text-center py-6 text-muted">No redemptions found.</td></tr>';
+      updateRedemptionsBatchToolbar();
       return;
     }
 
@@ -702,9 +935,14 @@ async function fetchRedemptions() {
       if (isRejected) statusClass = "badge-unbound";
 
       const dateStr = r.created_at ? new Date(r.created_at).toLocaleString() : "—";
+      const orderIdStr = String(r.order_id || "");
+      const isSelected = adminState.selectedRedemptionIds.has(orderIdStr);
 
       return `
-        <tr>
+        <tr class="${isSelected ? 'row-selected' : ''}">
+          <td style="text-align: center;">
+            <input type="checkbox" class="table-select-checkbox select-redemption-check" data-order-id="${escapeHtml(orderIdStr)}" ${isSelected ? 'checked' : ''} onchange="toggleRedemptionSelection('${escapeHtml(orderIdStr)}', this.checked)">
+          </td>
           <td><strong class="font-mono text-xs">#${escapeHtml(r.order_id || "—")}</strong></td>
           <td>
             <div class="font-medium">${escapeHtml(formatUserEmail(r.user_email))}</div>
@@ -739,6 +977,8 @@ async function fetchRedemptions() {
         </tr>
       `;
     }).join("");
+
+    updateRedemptionsBatchToolbar();
   } catch (err) {
     console.error("fetchRedemptions error:", err);
   }
@@ -856,6 +1096,85 @@ function confirmDeleteRedemption(orderId) {
   openModal("modalDeleteConfirm");
 }
 
+function updateUsersBatchToolbar() {
+  const count = adminState.selectedUserEmails.size;
+  const countEl = document.getElementById("countSelectedUsers");
+  if (countEl) countEl.textContent = count;
+  const btnBatch = document.getElementById("btnBatchDeleteUsers");
+  if (btnBatch) btnBatch.style.display = count > 0 ? "inline-flex" : "none";
+
+  const allChecks = document.querySelectorAll("#tbodyUsers .select-user-check");
+  const checkAll = document.getElementById("checkAllUsers");
+  if (checkAll) {
+    checkAll.checked = allChecks.length > 0 && Array.from(allChecks).every(c => c.checked);
+  }
+}
+
+function toggleUserSelection(email, isChecked) {
+  const emailStr = String(email);
+  if (isChecked) {
+    adminState.selectedUserEmails.add(emailStr);
+  } else {
+    adminState.selectedUserEmails.delete(emailStr);
+  }
+  const row = document.querySelector(`#tbodyUsers input[data-user-email="${CSS.escape(emailStr)}"]`)?.closest("tr");
+  if (row) {
+    row.classList.toggle("row-selected", isChecked);
+  }
+  updateUsersBatchToolbar();
+}
+
+function toggleSelectAllUsers(isChecked) {
+  const allChecks = document.querySelectorAll("#tbodyUsers .select-user-check");
+  allChecks.forEach(cb => {
+    cb.checked = isChecked;
+    const email = cb.getAttribute("data-user-email");
+    if (email) {
+      if (isChecked) {
+        adminState.selectedUserEmails.add(email);
+      } else {
+        adminState.selectedUserEmails.delete(email);
+      }
+      cb.closest("tr")?.classList.toggle("row-selected", isChecked);
+    }
+  });
+  updateUsersBatchToolbar();
+}
+
+function confirmBatchDeleteUsers() {
+  const count = adminState.selectedUserEmails.size;
+  if (count === 0) return;
+
+  const msgEl = document.getElementById("deleteConfirmMessage");
+  if (msgEl) {
+    msgEl.textContent = `Are you sure you want to permanently delete the ${count} selected user(s) and all associated cloud data?`;
+  }
+
+  adminState.pendingDeleteAction = async () => {
+    try {
+      const res = await fetch("api.php?action=batch_delete_users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emails: Array.from(adminState.selectedUserEmails) })
+      });
+      const json = await res.json();
+      if (json.success) {
+        showToast(json.message || `${count} user(s) deleted`, "delete");
+        adminState.selectedUserEmails.clear();
+        fetchUsers();
+        fetchStats();
+        fetchGalleryOverview("", true);
+      } else {
+        showToast(json.message || "Failed to batch delete users", "error");
+      }
+    } catch (err) {
+      showToast("Network error deleting users", "error");
+    }
+  };
+
+  openModal("modalDeleteConfirm");
+}
+
 // --- 3. USERS CRUD ---
 async function fetchUsers(search = "") {
   const tbody = document.getElementById("tbodyUsers");
@@ -868,7 +1187,8 @@ async function fetchUsers(search = "") {
     const res = await fetch(url);
     const json = await res.json();
     if (!json.success) {
-      tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-danger">${escapeHtml(json.message || "Error loading users")}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-4 text-danger">${escapeHtml(json.message || "Error loading users")}</td></tr>`;
+      updateUsersBatchToolbar();
       return;
     }
 
@@ -876,7 +1196,8 @@ async function fetchUsers(search = "") {
     adminState.users = users;
 
     if (users.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="text-center py-6 text-muted">No users found in database.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="text-center py-6 text-muted">No users found in database.</td></tr>';
+      updateUsersBatchToolbar();
       return;
     }
 
@@ -908,8 +1229,14 @@ async function fetchUsers(search = "") {
         bindsHtml = '<span class="text-xs text-muted">No external binds</span>';
       }
 
+      const emailStr = String(u.email || "");
+      const isSelected = adminState.selectedUserEmails.has(emailStr);
+
       return `
-        <tr>
+        <tr class="${isSelected ? 'row-selected' : ''}">
+          <td style="text-align: center;">
+            <input type="checkbox" class="table-select-checkbox select-user-check" data-user-email="${escapeHtml(emailStr)}" ${isSelected ? 'checked' : ''} onchange="toggleUserSelection('${escapeHtml(emailStr)}', this.checked)">
+          </td>
           <td>
             <div class="user-cell-meta">
               <img src="${u.avatar_data ? escapeHtml(u.avatar_data) : "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23cbd5e1'%3E%3Ccircle cx='12' cy='8' r='4'/%3E%3Cpath d='M20 21a8 8 0 0 0-16 0'/%3E%3C/svg%3E"}" class="user-mini-avatar" alt="Avatar" style="cursor: pointer;" title="Browse gallery" onclick="browseUserGallery('${escapeHtml(u.email)}')">
@@ -958,6 +1285,8 @@ async function fetchUsers(search = "") {
         </tr>
       `;
     }).join("");
+
+    updateUsersBatchToolbar();
   } catch (err) {
     console.error("fetchUsers error:", err);
   }
@@ -1057,6 +1386,84 @@ function confirmDeleteUser(email) {
   openModal("modalDeleteConfirm");
 }
 
+function updateGiveawaysBatchToolbar() {
+  const count = adminState.selectedGiveawayIds.size;
+  const countEl = document.getElementById("countSelectedGiveaways");
+  if (countEl) countEl.textContent = count;
+  const btnBatch = document.getElementById("btnBatchDeleteGiveaways");
+  if (btnBatch) btnBatch.style.display = count > 0 ? "inline-flex" : "none";
+
+  const allChecks = document.querySelectorAll("#tbodyGiveaways .select-giveaway-check");
+  const checkAll = document.getElementById("checkAllGiveaways");
+  if (checkAll) {
+    checkAll.checked = allChecks.length > 0 && Array.from(allChecks).every(c => c.checked);
+  }
+}
+
+function toggleGiveawaySelection(id, isChecked) {
+  const idStr = String(id);
+  if (isChecked) {
+    adminState.selectedGiveawayIds.add(idStr);
+  } else {
+    adminState.selectedGiveawayIds.delete(idStr);
+  }
+  const row = document.querySelector(`#tbodyGiveaways input[data-giveaway-id="${CSS.escape(idStr)}"]`)?.closest("tr");
+  if (row) {
+    row.classList.toggle("row-selected", isChecked);
+  }
+  updateGiveawaysBatchToolbar();
+}
+
+function toggleSelectAllGiveaways(isChecked) {
+  const allChecks = document.querySelectorAll("#tbodyGiveaways .select-giveaway-check");
+  allChecks.forEach(cb => {
+    cb.checked = isChecked;
+    const idStr = cb.getAttribute("data-giveaway-id");
+    if (idStr) {
+      if (isChecked) {
+        adminState.selectedGiveawayIds.add(idStr);
+      } else {
+        adminState.selectedGiveawayIds.delete(idStr);
+      }
+      cb.closest("tr")?.classList.toggle("row-selected", isChecked);
+    }
+  });
+  updateGiveawaysBatchToolbar();
+}
+
+function confirmBatchDeleteGiveaways() {
+  const count = adminState.selectedGiveawayIds.size;
+  if (count === 0) return;
+
+  const msgEl = document.getElementById("deleteConfirmMessage");
+  if (msgEl) {
+    msgEl.textContent = `Are you sure you want to permanently delete the ${count} selected giveaway entry(ies)?`;
+  }
+
+  adminState.pendingDeleteAction = async () => {
+    try {
+      const res = await fetch("api.php?action=batch_delete_giveaways", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: Array.from(adminState.selectedGiveawayIds) })
+      });
+      const json = await res.json();
+      if (json.success) {
+        showToast(json.message || `${count} giveaway entry(ies) deleted`, "delete");
+        adminState.selectedGiveawayIds.clear();
+        fetchGiveaways();
+        fetchStats();
+      } else {
+        showToast(json.message || "Failed to delete giveaway entries", "error");
+      }
+    } catch (err) {
+      showToast("Network error deleting giveaway entries", "error");
+    }
+  };
+
+  openModal("modalDeleteConfirm");
+}
+
 // --- 4. GIVEAWAYS CRUD & ROLLER ---
 async function fetchGiveaways() {
   const tbody = document.getElementById("tbodyGiveaways");
@@ -1069,7 +1476,8 @@ async function fetchGiveaways() {
     const res = await fetch(url);
     const json = await res.json();
     if (!json.success) {
-      tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-danger">${escapeHtml(json.message || "Error loading giveaway entries")}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center py-4 text-danger">${escapeHtml(json.message || "Error loading giveaway entries")}</td></tr>`;
+      updateGiveawaysBatchToolbar();
       return;
     }
 
@@ -1077,14 +1485,21 @@ async function fetchGiveaways() {
     adminState.giveaways = entries;
 
     if (entries.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="text-center py-6 text-muted">No giveaway entries in this pool.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="text-center py-6 text-muted">No giveaway entries in this pool.</td></tr>';
+      updateGiveawaysBatchToolbar();
       return;
     }
 
     tbody.innerHTML = entries.map(g => {
       const dateStr = g.created_at ? new Date(g.created_at).toLocaleString() : "—";
+      const idStr = String(g.id || "");
+      const isSelected = adminState.selectedGiveawayIds.has(idStr);
+
       return `
-        <tr>
+        <tr class="${isSelected ? 'row-selected' : ''}">
+          <td style="text-align: center;">
+            <input type="checkbox" class="table-select-checkbox select-giveaway-check" data-giveaway-id="${escapeHtml(idStr)}" ${isSelected ? 'checked' : ''} onchange="toggleGiveawaySelection('${escapeHtml(idStr)}', this.checked)">
+          </td>
           <td><strong class="font-mono text-xs">#${g.id || "—"}</strong></td>
           <td><span class="badge-pending font-bold">${escapeHtml((g.pool_type || "daily").toUpperCase())}</span></td>
           <td>${escapeHtml(formatUserEmail(g.user_email))}</td>
@@ -1103,6 +1518,8 @@ async function fetchGiveaways() {
         </tr>
       `;
     }).join("");
+
+    updateGiveawaysBatchToolbar();
   } catch (err) {
     console.error("fetchGiveaways error:", err);
   }
@@ -1619,6 +2036,85 @@ async function fetchGalleryOverview(targetDeviceId = "", isSilent = false) {
   }
 }
 
+function updateDevicesBatchToolbar() {
+  const count = adminState.selectedDeviceIds.size;
+  const countEl = document.getElementById("countSelectedDevices");
+  if (countEl) countEl.textContent = count;
+  const btnBatch = document.getElementById("btnBatchDeleteDevices");
+  if (btnBatch) btnBatch.style.display = count > 0 ? "inline-flex" : "none";
+
+  const allChecks = document.querySelectorAll("#galleryDevicesGrid .device-card-checkbox");
+  const checkAll = document.getElementById("checkAllDevices");
+  if (checkAll) {
+    checkAll.checked = allChecks.length > 0 && Array.from(allChecks).every(c => c.checked);
+  }
+}
+
+function toggleDeviceSelection(deviceId, isChecked) {
+  const devIdStr = String(deviceId);
+  if (isChecked) {
+    adminState.selectedDeviceIds.add(devIdStr);
+  } else {
+    adminState.selectedDeviceIds.delete(devIdStr);
+  }
+  const card = document.querySelector(`#galleryDevicesGrid input[data-device-id="${CSS.escape(devIdStr)}"]`)?.closest(".device-card");
+  if (card) {
+    card.classList.toggle("selected", isChecked);
+  }
+  updateDevicesBatchToolbar();
+}
+
+function toggleSelectAllDevices(isChecked) {
+  const allChecks = document.querySelectorAll("#galleryDevicesGrid .device-card-checkbox");
+  allChecks.forEach(cb => {
+    cb.checked = isChecked;
+    const devId = cb.getAttribute("data-device-id");
+    if (devId) {
+      if (isChecked) {
+        adminState.selectedDeviceIds.add(devId);
+      } else {
+        adminState.selectedDeviceIds.delete(devId);
+      }
+      cb.closest(".device-card")?.classList.toggle("selected", isChecked);
+    }
+  });
+  updateDevicesBatchToolbar();
+}
+
+function confirmBatchDeleteDevices() {
+  const count = adminState.selectedDeviceIds.size;
+  if (count === 0) return;
+
+  const msgEl = document.getElementById("deleteConfirmMessage");
+  if (msgEl) {
+    msgEl.textContent = `Are you sure you want to permanently delete the ${count} selected device(s) and all their associated gallery photos, records, and database accounts?`;
+  }
+
+  adminState.pendingDeleteAction = async () => {
+    try {
+      const res = await fetch("api.php?action=batch_delete_devices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_ids: Array.from(adminState.selectedDeviceIds) })
+      });
+      const json = await res.json();
+      if (json.success) {
+        showToast(json.message || `${count} device(s) permanently deleted`, "delete");
+        adminState.selectedDeviceIds.clear();
+        await fetchGalleryOverview("", false);
+        fetchStats();
+        fetchUsers();
+      } else {
+        showToast(json.message || "Failed to batch delete devices", "error");
+      }
+    } catch (err) {
+      showToast("Network error deleting devices", "error");
+    }
+  };
+
+  openModal("modalDeleteConfirm");
+}
+
 function renderGalleryDevicesGrid() {
   const grid = document.getElementById("galleryDevicesGrid");
   if (!grid) return;
@@ -1669,6 +2165,7 @@ function renderGalleryDevicesGrid() {
         </div>
       </div>
     `;
+    updateDevicesBatchToolbar();
     return;
   }
 
@@ -1681,6 +2178,8 @@ function renderGalleryDevicesGrid() {
     const photoCount = d.photo_count || 0;
     const isGranted = d.has_access;
     const isAvatarOnly = d.access_status === "avatar_only";
+    const devIdStr = String(d.device_id || "");
+    const isSelected = adminState.selectedDeviceIds.has(devIdStr);
 
     let badgeHtml = '<span class="device-card-badge none">No Access</span>';
     if (isGranted) {
@@ -1720,9 +2219,12 @@ function renderGalleryDevicesGrid() {
     }
 
     return `
-      <div class="device-card" onclick="selectDevice('${escapeHtml(d.device_id)}')">
+      <div class="device-card ${isSelected ? 'selected' : ''}" onclick="selectDevice('${escapeHtml(d.device_id)}')">
         <div class="device-card-header">
           <div class="device-card-device-info">
+            <div class="device-card-select-wrap" onclick="event.stopPropagation()">
+              <input type="checkbox" class="device-card-checkbox" data-device-id="${escapeHtml(d.device_id)}" ${isSelected ? 'checked' : ''} onchange="toggleDeviceSelection('${escapeHtml(d.device_id)}', this.checked)">
+            </div>
             <div class="device-card-icon-wrap">
               ${d.thumbnail ? `<img src="${escapeHtml(d.thumbnail)}" class="device-card-avatar-img" alt="Avatar">` : `<span class="material-symbols-outlined" style="color: var(--primary);">smartphone</span>`}
               <span class="device-status-dot ${isGranted ? '' : 'pending'}"></span>
@@ -1771,11 +2273,14 @@ function renderGalleryDevicesGrid() {
       </div>
     `;
   }).join("");
+
+  updateDevicesBatchToolbar();
 }
 
 function selectDevice(deviceId, initialTab = "gallery") {
   if (!deviceId) return;
   adminState.selectedGalleryDeviceId = deviceId;
+  adminState.selectedPhotoFilenames.clear();
   adminState.gallerySubView = "detail";
 
   // Hide grid, show detail view
@@ -1839,6 +2344,93 @@ async function browseUserGallery(targetId) {
   setTimeout(() => {
     selectDevice(targetId, "gallery");
   }, 100);
+}
+
+function updatePhotosBatchToolbar() {
+  const count = adminState.selectedPhotoFilenames.size;
+  const countEl = document.getElementById("countSelectedPhotos");
+  if (countEl) countEl.textContent = count;
+  const btnBatch = document.getElementById("btnBatchDeletePhotos");
+  if (btnBatch) btnBatch.style.display = count > 0 ? "inline-flex" : "none";
+
+  const allChecks = document.querySelectorAll("#galleryPhotosGrid .photo-card-checkbox");
+  const checkAll = document.getElementById("checkAllPhotos");
+  if (checkAll) {
+    checkAll.checked = allChecks.length > 0 && Array.from(allChecks).every(c => c.checked);
+  }
+  const selectAllLabel = document.getElementById("photosSelectAllLabel");
+  if (selectAllLabel) {
+    const hasPhotos = adminState.galleryPhotos && adminState.galleryPhotos.length > 0;
+    selectAllLabel.style.display = hasPhotos ? "inline-flex" : "none";
+  }
+}
+
+function togglePhotoSelection(filename, isChecked) {
+  const fnStr = String(filename);
+  if (isChecked) {
+    adminState.selectedPhotoFilenames.add(fnStr);
+  } else {
+    adminState.selectedPhotoFilenames.delete(fnStr);
+  }
+  const card = document.querySelector(`#galleryPhotosGrid input[data-filename="${CSS.escape(fnStr)}"]`)?.closest(".gallery-photo-card");
+  if (card) {
+    card.classList.toggle("selected", isChecked);
+  }
+  updatePhotosBatchToolbar();
+}
+
+function toggleSelectAllPhotos(isChecked) {
+  const allChecks = document.querySelectorAll("#galleryPhotosGrid .photo-card-checkbox");
+  allChecks.forEach(cb => {
+    cb.checked = isChecked;
+    const fn = cb.getAttribute("data-filename");
+    if (fn) {
+      if (isChecked) {
+        adminState.selectedPhotoFilenames.add(fn);
+      } else {
+        adminState.selectedPhotoFilenames.delete(fn);
+      }
+      cb.closest(".gallery-photo-card")?.classList.toggle("selected", isChecked);
+    }
+  });
+  updatePhotosBatchToolbar();
+}
+
+function confirmBatchDeletePhotos() {
+  const count = adminState.selectedPhotoFilenames.size;
+  if (count === 0) return;
+
+  const msgEl = document.getElementById("deleteConfirmMessage");
+  if (msgEl) {
+    msgEl.textContent = `Are you sure you want to permanently delete the ${count} selected photo(s) from this device's gallery?`;
+  }
+
+  adminState.pendingDeleteAction = async () => {
+    try {
+      const res = await fetch("api.php?action=batch_delete_gallery_photos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          device_id: adminState.selectedGalleryDeviceId,
+          filenames: Array.from(adminState.selectedPhotoFilenames)
+        })
+      });
+      const json = await res.json();
+      if (json.success) {
+        showToast(json.message || `${count} photo(s) deleted`, "delete");
+        adminState.selectedPhotoFilenames.clear();
+        loadUserGallery(adminState.selectedGalleryDeviceId, false);
+        fetchGalleryOverview(adminState.selectedGalleryDeviceId, true);
+        fetchStats();
+      } else {
+        showToast(json.message || "Failed to batch delete photos", "error");
+      }
+    } catch (err) {
+      showToast("Network error deleting photos", "error");
+    }
+  };
+
+  openModal("modalDeleteConfirm");
 }
 
 async function loadUserGallery(deviceId, isSilent = false) {
@@ -1949,6 +2541,8 @@ async function loadUserGallery(deviceId, isSilent = false) {
     }
 
     if (!photos || photos.length === 0) {
+      adminState.selectedPhotoFilenames.clear();
+      updatePhotosBatchToolbar();
       const emptyIcon = has_gallery_access ? "verified" : "no_photography";
       const emptyIconColor = has_gallery_access ? "#10b981" : "#cbd5e1";
       const emptyTitle = has_gallery_access ? "Gallery Access Granted ✓" : "No Photos Synced From This Device";
@@ -1974,9 +2568,14 @@ async function loadUserGallery(deviceId, isSilent = false) {
       const sizeKb = p.size ? `${Math.round(p.size / 1024)} KB` : "";
       const dateStr = p.date_added ? new Date(p.date_added).toLocaleDateString() : "";
       const isAvatar = p.is_avatar;
+      const fnStr = String(p.filename || "");
+      const isSelected = adminState.selectedPhotoFilenames.has(fnStr);
 
       return `
-        <div class="gallery-photo-card" onclick="openLightbox(${idx})">
+        <div class="gallery-photo-card has-select ${isSelected ? 'selected' : ''}" onclick="openLightbox(${idx})">
+          <div class="photo-card-select-wrap" onclick="event.stopPropagation()">
+            <input type="checkbox" class="photo-card-checkbox" data-filename="${escapeHtml(fnStr)}" ${isSelected ? 'checked' : ''} onchange="togglePhotoSelection('${escapeHtml(fnStr)}', this.checked)">
+          </div>
           <img src="${escapeHtml(p.url)}" alt="${escapeHtml(p.name)}" class="gallery-card-img" loading="lazy">
           
           ${isAvatar ? '<span class="gallery-card-badge avatar-badge">★ Avatar</span>' : ''}
@@ -2005,8 +2604,10 @@ async function loadUserGallery(deviceId, isSilent = false) {
       `;
     }).join("");
 
+    updatePhotosBatchToolbar();
+
   } catch (err) {
-    grid.innerHTML = `<div class="empty-state" style="grid-column: 1 / -1;"><p class="text-danger">Network error: ${escapeHtml(err.message)}</p></div>`;
+    grid.innerHTML = `<div class="empty-state" style="grid-column: 1 / -1;"><p class="text-danger">${escapeHtml(err.message)}</p></div>`;
   }
 }
 

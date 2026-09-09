@@ -213,16 +213,23 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
                 <h3>Live Redemption Queue</h3>
                 <p>Real-time player redemptions from the Ketupat mobile app</p>
               </div>
-              <button type="button" class="btn btn-secondary btn-sm" onclick="switchView('redemptions')">
-                <span>View All Orders</span>
-                <span class="material-symbols-outlined btn-icon-right">arrow_forward</span>
-              </button>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" class="btn btn-danger btn-sm" id="btnBatchDeleteRecentRedemptions" style="display: none;">
+                  <span class="material-symbols-outlined btn-icon">delete_sweep</span>
+                  <span>Delete Selected (<span id="countSelectedRecentRedemptions">0</span>)</span>
+                </button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="switchView('redemptions')">
+                  <span>View All Orders</span>
+                  <span class="material-symbols-outlined btn-icon-right">arrow_forward</span>
+                </button>
+              </div>
             </div>
             
             <div class="table-responsive">
               <table class="data-table" id="tableRecentRedemptions">
                 <thead>
                   <tr>
+                    <th style="width: 40px; text-align: center;"><input type="checkbox" id="checkAllRecentRedemptions" class="table-select-checkbox" title="Select all visible orders"></th>
                     <th>Order ID</th>
                     <th>Player Account</th>
                     <th>Diamonds</th>
@@ -233,7 +240,7 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
                   </tr>
                 </thead>
                 <tbody id="tbodyRecentRedemptions">
-                  <tr><td colspan="7" class="text-center py-4 text-muted">Loading orders...</td></tr>
+                  <tr><td colspan="8" class="text-center py-4 text-muted">Loading orders...</td></tr>
                 </tbody>
               </table>
             </div>
@@ -250,6 +257,11 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
             </div>
 
             <div class="filter-actions">
+              <button type="button" class="btn btn-danger btn-sm" id="btnBatchDeleteRedemptions" style="display: none;">
+                <span class="material-symbols-outlined btn-icon">delete_sweep</span>
+                <span>Delete Selected (<span id="countSelectedRedemptions">0</span>)</span>
+              </button>
+
               <select id="selectRedemptionStatusFilter" class="filter-select">
                 <option value="all">All Statuses</option>
                 <option value="Processing">Processing</option>
@@ -274,6 +286,7 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
               <table class="data-table" id="tableRedemptions">
                 <thead>
                   <tr>
+                    <th style="width: 40px; text-align: center;"><input type="checkbox" id="checkAllRedemptions" class="table-select-checkbox" title="Select all redemptions"></th>
                     <th>Order ID</th>
                     <th>User Email</th>
                     <th>MLBB Account</th>
@@ -301,6 +314,11 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
             </div>
 
             <div class="filter-actions">
+              <button type="button" class="btn btn-danger btn-sm" id="btnBatchDeleteUsers" style="display: none;">
+                <span class="material-symbols-outlined btn-icon">delete_sweep</span>
+                <span>Delete Selected (<span id="countSelectedUsers">0</span>)</span>
+              </button>
+
               <button type="button" class="btn btn-secondary btn-sm" id="btnExportUsersCsv">
                 <span class="material-symbols-outlined btn-icon">download</span>
                 <span>Export CSV</span>
@@ -318,6 +336,7 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
               <table class="data-table" id="tableUsers">
                 <thead>
                   <tr>
+                    <th style="width: 40px; text-align: center;"><input type="checkbox" id="checkAllUsers" class="table-select-checkbox" title="Select all users"></th>
                     <th>User / Email</th>
                     <th>MLBB ID & Server</th>
                     <th>Device & Fingerprint</th>
@@ -347,6 +366,11 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
             </div>
 
             <div class="filter-actions">
+              <button type="button" class="btn btn-danger btn-sm" id="btnBatchDeleteGiveaways" style="display: none;">
+                <span class="material-symbols-outlined btn-icon">delete_sweep</span>
+                <span>Delete Selected (<span id="countSelectedGiveaways">0</span>)</span>
+              </button>
+
               <button type="button" class="btn btn-secondary btn-sm" id="btnExportGiveawaysCsv">
                 <span class="material-symbols-outlined btn-icon">download</span>
                 <span>Export CSV</span>
@@ -369,6 +393,7 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
               <table class="data-table" id="tableGiveaways">
                 <thead>
                   <tr>
+                    <th style="width: 40px; text-align: center;"><input type="checkbox" id="checkAllGiveaways" class="table-select-checkbox" title="Select all giveaways"></th>
                     <th>ID</th>
                     <th>Pool Type</th>
                     <th>Player Email</th>
@@ -441,6 +466,17 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
                   <button type="button" class="filter-chip" data-filter="granted">Full Access ✓</button>
                   <button type="button" class="filter-chip" data-filter="avatar_only">Avatar Only ⏳</button>
                   <button type="button" class="filter-chip" data-filter="has_photos">Has Photos</button>
+                </div>
+
+                <div class="gallery-batch-toolbar" id="devicesBatchToolbar" style="display: flex; align-items: center; gap: 8px; margin-left: auto;">
+                  <label class="batch-select-label" style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.82rem; font-weight: 600; color: var(--text-muted); user-select: none;">
+                    <input type="checkbox" id="checkAllDevices" class="table-select-checkbox">
+                    <span>Select All</span>
+                  </label>
+                  <button type="button" class="btn btn-danger btn-sm" id="btnBatchDeleteDevices" style="display: none;">
+                    <span class="material-symbols-outlined btn-icon">delete_sweep</span>
+                    <span>Delete Selected (<span id="countSelectedDevices">0</span>)</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -545,7 +581,15 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
             <div id="paneGalleryPhotos" class="gallery-tab-pane active mt-3">
               <div class="gallery-photos-toolbar mb-3">
                 <div class="text-xs text-muted" id="galleryPhotosSummary">Displaying high-resolution synced media</div>
-                <div class="gallery-photos-actions">
+                <div class="gallery-photos-actions" style="display: flex; align-items: center; gap: 8px;">
+                  <label class="batch-select-label" id="photosSelectAllLabel" style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.82rem; font-weight: 600; color: var(--text-muted); user-select: none;">
+                    <input type="checkbox" id="checkAllPhotos" class="table-select-checkbox">
+                    <span>Select All</span>
+                  </label>
+                  <button type="button" class="btn btn-danger btn-xs" id="btnBatchDeletePhotos" style="display: none;">
+                    <span class="material-symbols-outlined" style="font-size: 14px;">delete_sweep</span>
+                    <span>Delete Selected (<span id="countSelectedPhotos">0</span>)</span>
+                  </button>
                   <button type="button" class="btn btn-secondary btn-xs" id="btnUploadPhotosInTab" onclick="openUploadGalleryModal()">
                     <span class="material-symbols-outlined" style="font-size: 14px;">add_photo_alternate</span>
                     <span>Upload</span>

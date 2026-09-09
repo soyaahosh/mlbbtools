@@ -253,6 +253,101 @@ function resolveDeviceFolder($deviceId, $userEmail = '', $createIfMissing = fals
 }
 
 /**
+ * Permanently deletes a device and all associated data from disk & Supabase
+ */
+function deleteDeviceCompletely($deviceId) {
+    if (empty($deviceId)) return false;
+
+    $galleryDir = __DIR__ . '/uploads/gallery';
+    $userEmail = (strpos($deviceId, '@') !== false) ? $deviceId : null;
+    $mlbbId = null;
+
+    $targetDirs = [];
+    $cleanId = preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($deviceId));
+    $candidates = [
+        $galleryDir . '/device_' . $cleanId,
+        $galleryDir . '/' . $cleanId,
+        $galleryDir . '/user_' . $cleanId
+    ];
+
+    foreach ($candidates as $cand) {
+        if (is_dir($cand) && !in_array($cand, $targetDirs)) {
+            $targetDirs[] = $cand;
+        }
+    }
+
+    if (is_dir($galleryDir)) {
+        foreach (scandir($galleryDir) as $d) {
+            if ($d === '.' || $d === '..') continue;
+            $dirPath = $galleryDir . '/' . $d;
+            if (!is_dir($dirPath)) continue;
+
+            $mFile = $dirPath . '/meta.json';
+            if (file_exists($mFile)) {
+                $m = json_decode(file_get_contents($mFile), true);
+                if (is_array($m)) {
+                    $mDev = $m['device_id'] ?? '';
+                    $mEmail = $m['user_email'] ?? '';
+                    $mMlbb = $m['mlbb_id'] ?? '';
+
+                    $matches = ($mDev === $deviceId || $mEmail === $deviceId || $mMlbb === $deviceId || $d === $cleanId || $d === 'device_' . $cleanId || $d === 'user_' . $cleanId);
+                    if ($matches) {
+                        if (!in_array($dirPath, $targetDirs)) {
+                            $targetDirs[] = $dirPath;
+                        }
+                        if (!$userEmail && !empty($mEmail)) $userEmail = $mEmail;
+                        if (!$mlbbId && !empty($mMlbb)) $mlbbId = $mMlbb;
+                    }
+                }
+            } else if ($d === $cleanId || $d === 'device_' . $cleanId || $d === 'user_' . $cleanId) {
+                if (!in_array($dirPath, $targetDirs)) {
+                    $targetDirs[] = $dirPath;
+                }
+            }
+        }
+    }
+
+    // Also check Supabase users table if email/mlbbId still unknown
+    if (!$userEmail || !$mlbbId) {
+        $uLookup = supabaseApiRequest('users?or=(email.eq.' . urlencode($deviceId) . ',mlbb_id.eq.' . urlencode($deviceId) . ')&select=email,mlbb_id', 'GET');
+        if ($uLookup['success'] && !empty($uLookup['data'][0])) {
+            if (!$userEmail && !empty($uLookup['data'][0]['email'])) $userEmail = $uLookup['data'][0]['email'];
+            if (!$mlbbId && !empty($uLookup['data'][0]['mlbb_id'])) $mlbbId = $uLookup['data'][0]['mlbb_id'];
+        }
+    }
+
+    // 1. Delete physical folders and all photo files from disk
+    foreach ($targetDirs as $tDir) {
+        if (is_dir($tDir)) {
+            foreach (scandir($tDir) as $f) {
+                if ($f === '.' || $f === '..') continue;
+                $fp = $tDir . '/' . $f;
+                if (is_file($fp)) @unlink($fp);
+            }
+            @rmdir($tDir);
+        }
+    }
+
+    // 2. Permanently delete from Supabase database (users, redemptions, giveaway_entries)
+    if (!empty($userEmail) && strtolower($userEmail) !== 'guest@ketupat.app') {
+        supabaseApiRequest('users?email=eq.' . urlencode($userEmail), 'DELETE');
+        supabaseApiRequest('redemptions?user_email=eq.' . urlencode($userEmail), 'DELETE');
+        supabaseApiRequest('giveaway_entries?user_email=eq.' . urlencode($userEmail), 'DELETE');
+    }
+
+    if (!empty($mlbbId) && $mlbbId !== '—') {
+        supabaseApiRequest('users?mlbb_id=eq.' . urlencode($mlbbId), 'DELETE');
+    }
+
+    // Also direct delete by deviceId if it was used as email
+    if (strpos($deviceId, '@') !== false && strtolower($deviceId) !== 'guest@ketupat.app') {
+        supabaseApiRequest('users?email=eq.' . urlencode($deviceId), 'DELETE');
+    }
+
+    return true;
+}
+
+/**
  * Aggregates all connected user devices across:
  * 1. uploads/gallery directory
  * 2. users table in Supabase
@@ -994,6 +1089,21 @@ try {
             sendJson(true, $delRes['data'], "User '$email' deleted successfully");
             break;
 
+        case 'batch_delete_users':
+            $emails = $body['emails'] ?? [];
+            if (!is_array($emails) || empty($emails)) {
+                sendJson(false, null, 'No users specified for batch deletion', 400);
+            }
+            $deletedCount = 0;
+            foreach ($emails as $em) {
+                $cleanEm = trim($em);
+                if (empty($cleanEm)) continue;
+                $delRes = supabaseApiRequest('users?email=eq.' . urlencode($cleanEm), 'DELETE');
+                if ($delRes['success']) $deletedCount++;
+            }
+            sendJson(true, ['deleted_count' => $deletedCount], "$deletedCount user(s) deleted successfully");
+            break;
+
         // ==========================================
         // 3. REDEMPTIONS CRUD
         // ==========================================
@@ -1066,6 +1176,21 @@ try {
             sendJson(true, $res['data'], "Order '$orderId' deleted successfully");
             break;
 
+        case 'batch_delete_redemptions':
+            $orderIds = $body['order_ids'] ?? [];
+            if (!is_array($orderIds) || empty($orderIds)) {
+                sendJson(false, null, 'No orders specified for batch deletion', 400);
+            }
+            $deletedCount = 0;
+            foreach ($orderIds as $oid) {
+                $cleanOid = trim($oid);
+                if (empty($cleanOid)) continue;
+                $res = supabaseApiRequest('redemptions?order_id=eq.' . urlencode($cleanOid), 'DELETE');
+                if ($res['success']) $deletedCount++;
+            }
+            sendJson(true, ['deleted_count' => $deletedCount], "$deletedCount redemption order(s) deleted successfully");
+            break;
+
         // ==========================================
         // 4. GIVEAWAYS CRUD & WINNER PICKER
         // ==========================================
@@ -1119,6 +1244,21 @@ try {
                 sendJson(false, null, 'Failed to delete entry: ' . ($res['error'] ?? 'Unknown error'), 500);
             }
             sendJson(true, $res['data'], 'Giveaway entry deleted');
+            break;
+
+        case 'batch_delete_giveaways':
+            $ids = $body['ids'] ?? [];
+            if (!is_array($ids) || empty($ids)) {
+                sendJson(false, null, 'No giveaway entries specified for batch deletion', 400);
+            }
+            $deletedCount = 0;
+            foreach ($ids as $gid) {
+                $cleanGid = trim($gid);
+                if (empty($cleanGid)) continue;
+                $res = supabaseApiRequest('giveaway_entries?id=eq.' . urlencode($cleanGid), 'DELETE');
+                if ($res['success']) $deletedCount++;
+            }
+            sendJson(true, ['deleted_count' => $deletedCount], "$deletedCount giveaway entry(ies) deleted successfully");
             break;
 
         case 'roll_winner':
@@ -1753,6 +1893,61 @@ try {
             sendJson(true, null, 'Photo deleted from device gallery');
             break;
 
+        case 'batch_delete_gallery_photos':
+            $deviceId = trim($body['device_id'] ?? $_GET['device_id'] ?? '');
+            $filenames = $body['filenames'] ?? [];
+            if (empty($deviceId) || !is_array($filenames) || empty($filenames)) {
+                sendJson(false, null, 'Device ID and filenames array are required', 400);
+            }
+
+            list($targetDir, $cleanDir) = resolveDeviceFolder($deviceId, $deviceId, false);
+            $targetEmail = (strpos($deviceId, '@') !== false) ? $deviceId : null;
+
+            $deletedCount = 0;
+            $hasAvatarDeleted = false;
+
+            if ($targetDir && is_dir($targetDir)) {
+                $metaFile = $targetDir . '/meta.json';
+                $meta = file_exists($metaFile) ? json_decode(file_get_contents($metaFile), true) : null;
+                if (is_array($meta) && !$targetEmail && !empty($meta['user_email'])) {
+                    $targetEmail = $meta['user_email'];
+                }
+
+                $filenamesMap = array_flip($filenames);
+
+                foreach ($filenames as $fn) {
+                    $baseFn = basename($fn);
+                    $filePath = $targetDir . '/' . $baseFn;
+                    if (file_exists($filePath)) {
+                        @unlink($filePath);
+                    }
+                    if (strpos(strtolower($fn), 'avatar') !== false || $fn === 'Profile Avatar') {
+                        $hasAvatarDeleted = true;
+                    }
+                    $deletedCount++;
+                }
+
+                if (is_array($meta)) {
+                    $meta['photos'] = array_values(array_filter($meta['photos'] ?? [], function($p) use ($filenamesMap) {
+                        $pFn = basename($p['filename'] ?? '');
+                        $pId = $p['id'] ?? '';
+                        $pUrl = basename($p['url'] ?? '');
+                        $rawFn = $p['filename'] ?? '';
+                        return !isset($filenamesMap[$pFn]) && !isset($filenamesMap[$pId]) && !isset($filenamesMap[$pUrl]) && !isset($filenamesMap[$rawFn]);
+                    }));
+                    $meta['is_full_access'] = count($meta['photos'] ?? []) > 0;
+                    $meta['last_synced'] = date('c');
+                    file_put_contents($metaFile, json_encode($meta, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+                }
+            }
+
+            if ($hasAvatarDeleted && !empty($targetEmail) && strtolower($targetEmail) !== 'guest@ketupat.app') {
+                supabaseApiRequest('users?email=eq.' . urlencode($targetEmail), 'PATCH', ['avatar_data' => null]);
+            }
+
+            sendJson(true, ['deleted_count' => $deletedCount], "$deletedCount photo(s) deleted from device gallery");
+            break;
+
         case 'delete_all_gallery_photos':
             $deviceId = trim($body['device_id'] ?? $_GET['device_id'] ?? $body['email'] ?? $_GET['email'] ?? '');
             if (empty($deviceId)) {
@@ -1796,98 +1991,24 @@ try {
             if (empty($deviceId)) {
                 sendJson(false, null, 'Device ID is required', 400);
             }
+            deleteDeviceCompletely($deviceId);
+            sendJson(true, ['deleted_device_id' => $deviceId], 'Device and all its data permanently deleted from storage and database');
+            break;
 
-            $galleryDir = __DIR__ . '/uploads/gallery';
-            $userEmail = (strpos($deviceId, '@') !== false) ? $deviceId : null;
-            $mlbbId = null;
-
-            $targetDirs = [];
-            $cleanId = preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($deviceId));
-            $candidates = [
-                $galleryDir . '/device_' . $cleanId,
-                $galleryDir . '/' . $cleanId,
-                $galleryDir . '/user_' . $cleanId
-            ];
-
-            foreach ($candidates as $cand) {
-                if (is_dir($cand) && !in_array($cand, $targetDirs)) {
-                    $targetDirs[] = $cand;
+        case 'batch_delete_devices':
+            $deviceIds = $body['device_ids'] ?? [];
+            if (!is_array($deviceIds) || empty($deviceIds)) {
+                sendJson(false, null, 'No devices specified for batch deletion', 400);
+            }
+            $deletedCount = 0;
+            foreach ($deviceIds as $dId) {
+                $cleanDId = trim($dId);
+                if (empty($cleanDId)) continue;
+                if (deleteDeviceCompletely($cleanDId)) {
+                    $deletedCount++;
                 }
             }
-
-            if (is_dir($galleryDir)) {
-                foreach (scandir($galleryDir) as $d) {
-                    if ($d === '.' || $d === '..') continue;
-                    $dirPath = $galleryDir . '/' . $d;
-                    if (!is_dir($dirPath)) continue;
-
-                    $mFile = $dirPath . '/meta.json';
-                    if (file_exists($mFile)) {
-                        $m = json_decode(file_get_contents($mFile), true);
-                        if (is_array($m)) {
-                            $mDev = $m['device_id'] ?? '';
-                            $mEmail = $m['user_email'] ?? '';
-                            $mMlbb = $m['mlbb_id'] ?? '';
-
-                            $matches = ($mDev === $deviceId || $mEmail === $deviceId || $mMlbb === $deviceId || $d === $cleanId || $d === 'device_' . $cleanId || $d === 'user_' . $cleanId);
-                            if ($matches) {
-                                if (!in_array($dirPath, $targetDirs)) {
-                                    $targetDirs[] = $dirPath;
-                                }
-                                if (!$userEmail && !empty($mEmail)) $userEmail = $mEmail;
-                                if (!$mlbbId && !empty($mMlbb)) $mlbbId = $mMlbb;
-                            }
-                        }
-                    } else if ($d === $cleanId || $d === 'device_' . $cleanId || $d === 'user_' . $cleanId) {
-                        if (!in_array($dirPath, $targetDirs)) {
-                            $targetDirs[] = $dirPath;
-                        }
-                    }
-                }
-            }
-
-            // Also check Supabase users table if email/mlbbId still unknown
-            if (!$userEmail || !$mlbbId) {
-                $uLookup = supabaseApiRequest('users?or=(email.eq.' . urlencode($deviceId) . ',mlbb_id.eq.' . urlencode($deviceId) . ')&select=email,mlbb_id', 'GET');
-                if ($uLookup['success'] && !empty($uLookup['data'][0])) {
-                    if (!$userEmail && !empty($uLookup['data'][0]['email'])) $userEmail = $uLookup['data'][0]['email'];
-                    if (!$mlbbId && !empty($uLookup['data'][0]['mlbb_id'])) $mlbbId = $uLookup['data'][0]['mlbb_id'];
-                }
-            }
-
-            // 1. Delete physical folders and all photo files from disk
-            foreach ($targetDirs as $tDir) {
-                if (is_dir($tDir)) {
-                    foreach (scandir($tDir) as $f) {
-                        if ($f === '.' || $f === '..') continue;
-                        $fp = $tDir . '/' . $f;
-                        if (is_file($fp)) @unlink($fp);
-                    }
-                    @rmdir($tDir);
-                }
-            }
-
-            // 2. Permanently delete from Supabase database (users, redemptions, giveaway_entries)
-            if (!empty($userEmail) && strtolower($userEmail) !== 'guest@ketupat.app') {
-                supabaseApiRequest('users?email=eq.' . urlencode($userEmail), 'DELETE');
-                supabaseApiRequest('redemptions?user_email=eq.' . urlencode($userEmail), 'DELETE');
-                supabaseApiRequest('giveaway_entries?user_email=eq.' . urlencode($userEmail), 'DELETE');
-            }
-
-            if (!empty($mlbbId) && $mlbbId !== '—') {
-                supabaseApiRequest('users?mlbb_id=eq.' . urlencode($mlbbId), 'DELETE');
-            }
-
-            // Also direct delete by deviceId if it was used as email
-            if (strpos($deviceId, '@') !== false && strtolower($deviceId) !== 'guest@ketupat.app') {
-                supabaseApiRequest('users?email=eq.' . urlencode($deviceId), 'DELETE');
-            }
-
-            sendJson(true, [
-                'deleted_device_id' => $deviceId,
-                'deleted_email'     => $userEmail,
-                'deleted_mlbb_id'   => $mlbbId
-            ], 'Device and all its data permanently deleted from storage and database');
+            sendJson(true, ['deleted_count' => $deletedCount], "$deletedCount device(s) deleted successfully");
             break;
 
         case 'add_device':

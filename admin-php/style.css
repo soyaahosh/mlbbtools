@@ -3907,3 +3907,69 @@ body.command-center::before {
     grid-template-columns: 1fr;
   }
 }
+
+/* ==============================================================================
+   BATCH SELECTION STYLES (TABLES, DEVICES GRID, PHOTOS GRID)
+   ============================================================================== */
+.table-select-checkbox {
+  width: 17px;
+  height: 17px;
+  cursor: pointer;
+  accent-color: var(--primary);
+  vertical-align: middle;
+  border-radius: 4px;
+}
+
+.data-table tbody tr.row-selected {
+  background: linear-gradient(90deg, rgba(39, 221, 255, 0.16), rgba(132, 109, 255, 0.12)) !important;
+  box-shadow: inset 3px 0 var(--primary) !important;
+}
+
+.device-card-select-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.device-card-checkbox,
+.photo-card-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: var(--primary);
+  border-radius: 4px;
+}
+
+.device-card.selected {
+  border-color: rgba(39, 221, 255, 0.85) !important;
+  box-shadow: 0 0 0 1px rgba(39, 221, 255, 0.6), 0 12px 32px rgba(39, 221, 255, 0.25) !important;
+  background: linear-gradient(165deg, rgba(23, 38, 62, 0.98), rgba(15, 23, 44, 0.98)) !important;
+}
+
+.photo-card-select-wrap {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 6;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: rgba(11, 15, 28, 0.78);
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(136, 158, 205, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.gallery-photo-card.has-select .gallery-card-badge.avatar-badge {
+  left: 42px;
+}
+
+.gallery-photo-card.selected {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+  box-shadow: 0 0 20px rgba(39, 221, 255, 0.45) !important;
+}
