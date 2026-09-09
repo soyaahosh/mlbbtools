@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ketupat MLBB - Supabase Admin Console</title>
+  
+  <!-- Google Material Symbols Outlined & Google Inter Font -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+  <link rel="stylesheet" href="admin.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23059669'%3E%3Cpath d='M12 2L2 12l10 10 10-10L12 2zm0 3.8L18.2 12 12 18.2 5.8 12 12 5.8z'/%3E%3C/svg%3E">
+</head>
+<body>
+
+  <div class="admin-layout">
+    
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="logo-badge">
+          <span class="material-symbols-outlined">diamond</span>
+        </div>
+        <div class="brand-text">
+          <h1>Ketupat MLBB</h1>
+          <p>Admin Console</p>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-title">Operations</div>
+        
+        <button type="button" class="nav-item-link active" data-view="overview">
+          <span class="material-symbols-outlined nav-icon">dashboard</span>
+          <span>Dashboard</span>
+        </button>
+
+        <button type="button" class="nav-item-link" data-view="redemptions">
+          <span class="material-symbols-outlined nav-icon">shopping_bag</span>
+          <span>Redemptions</span>
+          <span class="nav-pill-badge" id="sidebarPendingBadge">0</span>
+        </button>
+
+        <button type="button" class="nav-item-link" data-view="users">
+          <span class="material-symbols-outlined nav-icon">group</span>
+          <span>Users & Players</span>
+        </button>
+
+        <button type="button" class="nav-item-link" data-view="giveaways">
+          <span class="material-symbols-outlined nav-icon">card_giftcard</span>
+          <span>Giveaway Arena</span>
+        </button>
+
+        <div class="nav-section-title">System</div>
+
+        <button type="button" class="nav-item-link" data-view="settings">
+          <span class="material-symbols-outlined nav-icon">tune</span>
+          <span>Cloud Settings</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="db-pill">
+          <span class="status-dot online" id="sidebarStatusDot"></span>
+          <span id="sidebarStatusText">Supabase Connected</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Wrapper -->
+    <div class="main-wrapper">
+      
+      <!-- Top Navigation Header -->
+      <header class="top-header">
+        <div class="header-left">
+          <button type="button" class="btn-mobile-menu" id="btnMobileMenu">
+            <span class="material-symbols-outlined">menu</span>
+          </button>
+          <h2 class="page-title" id="pageTitleHeading">Dashboard Overview</h2>
+        </div>
+
+        <div class="header-right">
+          <select id="selectAutoRefresh" class="filter-select" title="Auto-refresh frequency">
+            <option value="0">Auto-refresh: Off</option>
+            <option value="15">Auto-refresh: 15s</option>
+            <option value="30" selected>Auto-refresh: 30s</option>
+            <option value="60">Auto-refresh: 60s</option>
+          </select>
+
+          <button type="button" id="btnRefreshAll" class="btn-refresh" title="Reload all data from Supabase">
+            <span class="material-symbols-outlined btn-icon">sync</span>
+            <span>Sync</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Main Content Views -->
+      <main class="content-area">
+
+        <!-- ================= VIEW 1: DASHBOARD OVERVIEW ================= -->
+        <section id="viewOverview" class="view-section active">
+          <!-- KPI Cards Grid -->
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-icon-wrap kpi-icon-amber">
+                <span class="material-symbols-outlined">pending_actions</span>
+              </div>
+              <div class="kpi-info">
+                <div class="kpi-title">Pending Orders</div>
+                <div class="kpi-value" id="kpiPendingOrders">0</div>
+                <div class="kpi-sub">Needs diamond top-up</div>
+              </div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-icon-wrap kpi-icon-blue">
+                <span class="material-symbols-outlined">diamond</span>
+              </div>
+              <div class="kpi-info">
+                <div class="kpi-title">Diamonds Claimed</div>
+                <div class="kpi-value" id="kpiDiamondsClaimed">0</div>
+                <div class="kpi-sub">Total redeemed across app</div>
+              </div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-icon-wrap kpi-icon-green">
+                <span class="material-symbols-outlined">person</span>
+              </div>
+              <div class="kpi-info">
+                <div class="kpi-title">Total Users</div>
+                <div class="kpi-value" id="kpiTotalUsers">0</div>
+                <div class="kpi-sub">Registered Ketupat accounts</div>
+              </div>
+            </div>
+
+            <div class="kpi-card">
+              <div class="kpi-icon-wrap kpi-icon-purple">
+                <span class="material-symbols-outlined">confirmation_number</span>
+              </div>
+              <div class="kpi-info">
+                <div class="kpi-title">Giveaway Tickets</div>
+                <div class="kpi-value" id="kpiTotalTickets">0</div>
+                <div class="kpi-sub">Purchased by players</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Actions & Pending Orders Spotlight -->
+          <div class="admin-card">
+            <div class="card-header-bar">
+              <div class="card-header-title">
+                <span class="material-symbols-outlined text-amber">hourglass_top</span>
+                <span>Urgent: Orders Pending Diamond Delivery</span>
+              </div>
+              <button type="button" class="btn btn-outline btn-sm" onclick="switchAdminTab('redemptions')">
+                <span>View All Redemptions</span>
+                <span class="material-symbols-outlined">arrow_forward</span>
+              </button>
+            </div>
+
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Order ID</th>
+                    <th>Player Destination (MLBB)</th>
+                    <th>Package</th>
+                    <th>Status</th>
+                    <th>Order Date</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="tbodyOverviewPending">
+                  <tr>
+                    <td colspan="6" class="empty-state">
+                      <span class="material-symbols-outlined">check_circle</span>
+                      <p>No orders currently waiting for delivery!</p>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Top Users Leaderboard Preview -->
+          <div class="admin-card">
+            <div class="card-header-bar">
+              <div class="card-header-title">
+                <span class="material-symbols-outlined text-primary">leaderboard</span>
+                <span>Player Leaderboard (Top Points)</span>
+              </div>
+              <button type="button" class="btn btn-outline btn-sm" onclick="switchAdminTab('users')">
+                <span>Manage Users</span>
+                <span class="material-symbols-outlined">arrow_forward</span>
+              </button>
+            </div>
+
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Player</th>
+                    <th>MLBB Account ID</th>
+                    <th>Region</th>
+                    <th>Points Balance</th>
+                    <th>Diamonds Claimed</th>
+                    <th>Tickets</th>
+                  </tr>
+                </thead>
+                <tbody id="tbodyOverviewTopUsers">
+                  <!-- Injected via JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================= VIEW 2: REDEMPTIONS ================= -->
+        <section id="viewRedemptions" class="view-section">
+          <div class="admin-card">
+            <div class="card-header-bar">
+              <div class="card-header-title">
+                <span class="material-symbols-outlined">shopping_bag</span>
+                <span>Diamond Store Redemptions</span>
+              </div>
+
+              <div class="card-header-actions">
+                <div class="search-input-wrap">
+                  <span class="material-symbols-outlined search-icon">search</span>
+                  <input type="text" id="searchRedemptions" class="search-input" placeholder="Search order, email, IGN, MLBB ID...">
+                </div>
+
+                <select id="filterRedemptionStatus" class="filter-select">
+                  <option value="all">All Statuses</option>
+                  <option value="Processing" selected>Processing Only</option>
+                  <option value="Delivered">Delivered Only</option>
+                  <option value="Cancelled">Cancelled Only</option>
+                </select>
+
+                <button type="button" id="btnExportRedemptionsCsv" class="btn btn-outline btn-sm">
+                  <span class="material-symbols-outlined">download</span>
+                  <span>Export CSV</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Order ID</th>
+                    <th>Target MLBB Account</th>
+                    <th>Package (Diamonds)</th>
+                    <th>Cost</th>
+                    <th>User Email</th>
+                    <th>Status</th>
+                    <th>Date</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="tbodyRedemptions">
+                  <!-- Injected via JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================= VIEW 3: USERS ================= -->
+        <section id="viewUsers" class="view-section">
+          <div class="admin-card">
+            <div class="card-header-bar">
+              <div class="card-header-title">
+                <span class="material-symbols-outlined">group</span>
+                <span>Registered Users & Player Profiles</span>
+              </div>
+
+              <div class="card-header-actions">
+                <div class="search-input-wrap">
+                  <span class="material-symbols-outlined search-icon">search</span>
+                  <input type="text" id="searchUsers" class="search-input" placeholder="Search user by email, IGN, MLBB ID...">
+                </div>
+
+                <button type="button" id="btnExportUsersCsv" class="btn btn-outline btn-sm">
+                  <span class="material-symbols-outlined">download</span>
+                  <span>Export CSV</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Player</th>
+                    <th>MLBB Account ID & Zone</th>
+                    <th>Points Balance</th>
+                    <th>Claimed</th>
+                    <th>Tickets</th>
+                    <th>Streak</th>
+                    <th>Recorded Location</th>
+                    <th>Last Active</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="tbodyUsers">
+                  <!-- Injected via JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================= VIEW 4: GIVEAWAYS ================= -->
+        <section id="viewGiveaways" class="view-section">
+          <!-- Arena Hero Card -->
+          <div class="giveaway-arena-card">
+            <div class="arena-title" id="arenaPoolTitle">Mega Diamond Giveaway Arena</div>
+            <p class="arena-desc">Draw verified random winners live with weighted probabilities based on purchased ticket counts.</p>
+
+            <div class="arena-stats-strip">
+              <div class="arena-stat-box">
+                <div class="arena-stat-val" id="arenaTotalTickets">0</div>
+                <div class="arena-stat-lbl">Tickets In Pool</div>
+              </div>
+              <div class="arena-stat-box">
+                <div class="arena-stat-val" id="arenaTotalParticipants">0</div>
+                <div class="arena-stat-lbl">Participants</div>
+              </div>
+              <div class="arena-stat-box">
+                <div class="arena-stat-val" id="arenaTotalPoints">0</div>
+                <div class="arena-stat-lbl">Points Invested</div>
+              </div>
+            </div>
+
+            <div>
+              <button type="button" id="btnRollWinner" class="btn-roll-winner">
+                <span class="material-symbols-outlined">casino</span>
+                <span>Roll & Pick Winner!</span>
+              </button>
+            </div>
+
+            <div class="winner-ticker-box" id="winnerTickerBox">
+              <div style="font-size:0.8rem; color:#d1fae5; text-transform:uppercase; margin-bottom:4px;">Rolling Tickets...</div>
+              <div class="winner-name-display" id="winnerTickerName">Selecting Winner...</div>
+            </div>
+          </div>
+
+          <!-- Participants Table -->
+          <div class="admin-card">
+            <div class="card-header-bar">
+              <div class="card-header-title">
+                <span class="material-symbols-outlined">confirmation_number</span>
+                <span>Giveaway Ticket Holders</span>
+              </div>
+
+              <div class="card-header-actions">
+                <select id="selectGiveawayPool" class="filter-select">
+                  <option value="mega" selected>Mega Diamond Giveaway Pool (1,000 💎)</option>
+                  <option value="daily">Daily Diamond Giveaway Pool (150 💎)</option>
+                </select>
+
+                <button type="button" id="btnExportGiveawayCsv" class="btn btn-outline btn-sm">
+                  <span class="material-symbols-outlined">download</span>
+                  <span>Export CSV</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Participant</th>
+                    <th>MLBB Account ID</th>
+                    <th>Tickets Held</th>
+                    <th>Win Chance</th>
+                    <th>Points Spent</th>
+                    <th>Last Entry Time</th>
+                  </tr>
+                </thead>
+                <tbody id="tbodyGiveaways">
+                  <!-- Injected via JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================= VIEW 5: SETTINGS ================= -->
+        <section id="viewSettings" class="view-section">
+          <div class="admin-card" style="max-width: 680px;">
+            <div class="card-header-bar">
+              <div class="card-header-title">
+                <span class="material-symbols-outlined">database</span>
+                <span>Supabase Cloud Connection Settings</span>
+              </div>
+            </div>
+
+            <div class="modal-body">
+              <div class="form-group">
+                <label class="form-label" for="inputSupabaseUrl">Supabase Project URL</label>
+                <input type="url" id="inputSupabaseUrl" class="form-input font-mono" placeholder="https://your-project.supabase.co">
+                <div class="form-hint">Found in Supabase Dashboard -> Project Settings -> Data API.</div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="inputSupabaseKey">Publishable / Anon API Key</label>
+                <textarea id="inputSupabaseKey" class="form-textarea font-mono text-xs" rows="3" placeholder="sb_publishable_... or eyJ..."></textarea>
+                <div class="form-hint">Client-facing key for reading and updating player data.</div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="inputSupabaseSecret">Secret Key (Optional Admin Superpowers)</label>
+                <textarea id="inputSupabaseSecret" class="form-textarea font-mono text-xs" rows="2" placeholder="sb_secret_... (Optional)"></textarea>
+                <div class="form-hint">Optional. Allows unrestricted deletes and full admin access if needed. Stored strictly in your local browser storage.</div>
+              </div>
+
+              <div class="form-group" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);">
+                <label class="form-label" for="inputAdminDlyyzKey">DlyyZ REST API Key (MLBB Cekbind)</label>
+                <input type="text" id="inputAdminDlyyzKey" class="form-input font-mono text-xs" placeholder="Paste your DlyyZ REST API Key (e.g. from dlyyz-rest.my.id)">
+                <div class="form-hint">Powers MLBB account verification and platform bindings check (Moonton, Google Play, Facebook, TikTok, VK, Apple).</div>
+              </div>
+
+              <div id="settingsDiagStatus" class="status-msg hidden mb-3"></div>
+
+              <div style="display:flex; gap:10px; margin-top:20px;">
+                <button type="button" id="btnTestSettingsConn" class="btn btn-outline flex-1">
+                  <span class="material-symbols-outlined">network_check</span>
+                  <span>Test Tables & Health</span>
+                </button>
+                <button type="button" id="btnSaveSettings" class="btn btn-primary flex-1">
+                  <span class="material-symbols-outlined">save</span>
+                  <span>Save Configuration</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- ================= MODAL: UPDATE REDEMPTION STATUS ================= -->
+  <div id="modalUpdateRedemption" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title">Update Redemption Order</h3>
+        <button type="button" class="btn-close-modal" onclick="closeModal('modalUpdateRedemption')">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Order ID</label>
+          <input type="text" id="orderModalId" class="form-input font-mono" readonly>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Recipient MLBB Details</label>
+          <div id="orderModalDetails" style="padding:10px; background:var(--bg-subtle); border-radius:var(--radius-md); font-size:0.85rem;">—</div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="orderModalStatus">Delivery Status</label>
+          <select id="orderModalStatus" class="form-select">
+            <option value="Processing (7-14 Days)">Processing (7-14 Days)</option>
+            <option value="Delivered">Delivered (Completed)</option>
+            <option value="Cancelled">Cancelled (Refund Player)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="orderModalNotes">Admin Notes / Top-up Transaction Ref</label>
+          <input type="text" id="orderModalNotes" class="form-input" placeholder="e.g. SmileOne Tx #829103, UniPin Ref #3910">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="closeModal('modalUpdateRedemption')">Cancel</button>
+        <button type="button" id="btnSubmitUpdateStatus" class="btn btn-primary">Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODAL: ADJUST USER POINTS ================= -->
+  <div id="modalAdjustPoints" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title">Adjust Player Points</h3>
+        <button type="button" class="btn-close-modal" onclick="closeModal('modalAdjustPoints')">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">User Email / IGN</label>
+          <input type="text" id="adjustPointsUser" class="form-input" readonly>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Current Points Balance</label>
+          <input type="text" id="adjustPointsCurrent" class="form-input font-bold" readonly>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="adjustPointsDelta">Adjustment Amount (+ or -)</label>
+          <input type="number" id="adjustPointsDelta" class="form-input" placeholder="e.g. 100 or -50">
+          <div class="form-hint">Enter positive numbers to add bonus points, negative to deduct.</div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="adjustPointsReason">Reason for Adjustment</label>
+          <input type="text" id="adjustPointsReason" class="form-input" placeholder="e.g. Contest winner, Compensation, Event bonus">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" onclick="closeModal('modalAdjustPoints')">Cancel</button>
+        <button type="button" id="btnSubmitAdjustPoints" class="btn btn-primary">Apply Points</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= MODAL: WINNER CELEBRATION ================= -->
+  <div id="modalWinnerAlert" class="modal-overlay">
+    <div class="modal-card text-center" style="max-width: 440px; padding: 24px;">
+      <div style="font-size: 3.5rem; margin-bottom: 10px;">🏆</div>
+      <h3 class="modal-title" style="font-size:1.4rem; color:var(--primary);">Giveaway Winner Picked!</h3>
+      <p style="color:var(--text-muted); font-size:0.88rem; margin-bottom: 20px;">Congratulations to our lucky MLBB player!</p>
+
+      <div style="background:var(--primary-light); border:1px solid var(--primary-border); border-radius:var(--radius-lg); padding:16px; margin-bottom:20px; text-align:left;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+          <span style="color:var(--text-muted); font-size:0.8rem;">Winner IGN:</span>
+          <span id="winnerModalIgn" style="font-weight:800; font-size:1.05rem; color:var(--text-main);">—</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+          <span style="color:var(--text-muted); font-size:0.8rem;">MLBB User ID:</span>
+          <span id="winnerModalId" style="font-family:monospace; font-weight:700;">—</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+          <span style="color:var(--text-muted); font-size:0.8rem;">Server (Zone):</span>
+          <span id="winnerModalServer" style="font-family:monospace; font-weight:700;">—</span>
+        </div>
+        <div style="display:flex; justify-content:space-between;">
+          <span style="color:var(--text-muted); font-size:0.8rem;">Tickets Held:</span>
+          <span id="winnerModalTickets" style="font-weight:700; color:var(--primary);">—</span>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:10px;">
+        <button type="button" id="btnCopyWinnerDetails" class="btn btn-outline flex-1">
+          <span class="material-symbols-outlined">content_copy</span>
+          <span>Copy Top-Up Info</span>
+        </button>
+        <button type="button" class="btn btn-primary flex-1" onclick="closeModal('modalWinnerAlert')">
+          <span>Done</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="adminToast" class="admin-toast">
+    <span class="material-symbols-outlined" id="adminToastIcon">info</span>
+    <span id="adminToastText">Message</span>
+  </div>
+
+  <!-- Admin JavaScript Engine -->
+  <script src="admin.js"></script>
+</body>
+</html>

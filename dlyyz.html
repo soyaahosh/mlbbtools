@@ -1,0 +1,1127 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DLYYZ REST API - Real-time Stats</title>
+    <meta name="description" content="REST API DLYYZ - Alight Motion, Game Validator, MLBB Checker dan lainnya dengan statistik realtime, request per second, serta uptime monitor." />
+
+    <meta property="og:title" content="DLYYZ REST API - Real-time Stats" />
+    <meta property="og:description" content="Solusi API powerful untuk Alight Motion Premium, Game Validator (MLBB, FF, Roblox), & MLBB Complete Checker. Statistik realtime RPS, uptime, dan hit per endpoint." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://dlyyz-rest.my.id/" />
+    <meta property="og:image" content="https://dlyyz-rest.my.id/og-image.jpg" />
+    <meta property="og:image:alt" content="DLYYZ REST API Dashboard - Real-time API Statistics" />
+    <meta property="og:image:width" content="1024" />
+    <meta property="og:image:height" content="1024" />
+    <meta property="og:site_name" content="DLYYZ REST API" />
+    <meta property="og:locale" content="id_ID" />
+    
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="DLYYZ REST API - Real-time Stats" />
+    <meta name="twitter:description" content="API Alight Motion, Game Validator & MLBB Checker dengan monitoring realtime." />
+    <meta name="twitter:image" content="https://dlyyz-rest.my.id/og-image.jpg" />
+    
+    <link rel="icon" type="image/png" sizes="64x64" href="favicon.png" />
+    <link rel="apple-touch-icon" href="favicon.png" />
+    
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg:          #080010;
+            --surface:     #160024;
+            --surface-2:   #1d002f;
+            --surface-3:   #230038;
+            --border:      rgba(180, 80, 255, 0.18);
+            --border-hi:   rgba(255, 60, 160, 0.35);
+            --pink:        #ff2d9b;
+            --pink-2:      #ff6ec7;
+            --pink-glow:   rgba(255, 45, 155, 0.35);
+            --purple:      #c000ff;
+            --purple-2:    #d96aff;
+            --purple-glow: rgba(192, 0, 255, 0.35);
+            --green:       #00f5a0;
+            --yellow:      #ffe94d;
+            --cyan:        #00d4ff;
+            --text:        #ede0ff;
+            --text-2:      #a880c8;
+            --text-3:      #6b4888;
+            --radius-sm:   6px;
+            --radius-md:   10px;
+            --radius-lg:   16px;
+            --radius-xl:   24px;
+            --font-body:   'DM Sans', sans-serif;
+            --font-mono:   'Space Mono', monospace;
+            --nav-h:       60px;
+        }
+
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            overflow-x: hidden;
+            line-height: 1.6;
+        }
+
+        .bg-grid {
+            position: fixed; inset: 0;
+            background-image:
+                linear-gradient(rgba(192,0,255,.035) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(192,0,255,.035) 1px, transparent 1px);
+            background-size: 44px 44px;
+            pointer-events: none; z-index: 0;
+        }
+
+        .bg-orb {
+            position: fixed; border-radius: 50%;
+            filter: blur(100px); pointer-events: none; z-index: 0;
+            animation: drift 14s ease-in-out infinite alternate;
+        }
+        .bg-orb-1 { width: 560px; height: 560px; background: var(--purple-glow); top: -180px; left: -180px; }
+        .bg-orb-2 { width: 480px; height: 480px; background: var(--pink-glow); bottom: -160px; right: -160px; animation-delay: -7s; }
+        .bg-orb-3 { width: 320px; height: 320px; background: rgba(0,245,160,.05); top: 40%; left: 45%; }
+
+        @keyframes drift {
+            from { transform: translate(0,0) scale(1); }
+            to   { transform: translate(30px, 20px) scale(1.05); }
+        }
+
+        nav {
+            position: fixed; top: 0; left: 0; right: 0;
+            height: var(--nav-h); z-index: 1000;
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 clamp(16px, 4vw, 40px);
+            background: rgba(8,0,16,.85);
+            backdrop-filter: blur(24px) saturate(1.4);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .nav-logo {
+            display: flex; align-items: center; gap: 10px;
+            text-decoration: none; font-size: 20px; font-weight: 700;
+            letter-spacing: -.3px; flex-shrink: 0;
+        }
+        .logo-gem {
+            width: 30px; height: 30px;
+            background: linear-gradient(135deg, var(--pink), var(--purple));
+            clip-path: polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+            animation: gem-spin 10s linear infinite;
+        }
+        @keyframes gem-spin { to { transform: rotate(360deg); } }
+        .logo-text {
+            background: linear-gradient(90deg, var(--pink-2), var(--purple-2));
+            -webkit-background-clip: text; background-clip: text; color: transparent;
+        }
+        .nav-links { display: flex; align-items: center; gap: 4px; }
+        .nav-link {
+            font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px;
+            color: var(--text-2); text-decoration: none; padding: 6px 14px;
+            border-radius: var(--radius-sm); border: 1px solid transparent;
+            transition: all .2s ease; white-space: nowrap;
+        }
+        .nav-link:hover  { color: var(--pink-2); border-color: var(--border-hi); background: rgba(255,45,155,.07); }
+        .nav-link.active { color: var(--pink-2); border-color: var(--border-hi); background: rgba(255,45,155,.10); }
+        .nav-cta {
+            font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px;
+            color: #fff; text-decoration: none; padding: 7px 18px;
+            border-radius: var(--radius-sm);
+            background: linear-gradient(135deg, var(--pink), var(--purple));
+            box-shadow: 0 0 16px var(--pink-glow); transition: all .2s ease;
+        }
+        .nav-cta:hover { box-shadow: 0 0 28px var(--pink-glow); transform: translateY(-1px); }
+
+        .nav-user {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .user-name {
+            font-size: 12px;
+            color: var(--text-2);
+            font-family: var(--font-mono);
+        }
+        .profile-link {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 10px;
+            background: rgba(255,45,155,0.1);
+            border: 1px solid var(--border-hi);
+            border-radius: 20px;
+            color: var(--pink-2);
+            text-decoration: none;
+            font-size: 11px;
+            font-family: var(--font-mono);
+            transition: all 0.3s ease;
+        }
+        .profile-link:hover {
+            background: rgba(255,45,155,0.2);
+            transform: translateY(-1px);
+        }
+        .profile-link svg {
+            width: 14px;
+            height: 14px;
+            stroke: currentColor;
+        }
+        .logout-btn {
+            padding: 5px 10px;
+            background: rgba(255,69,58,0.1);
+            border: 1px solid rgba(255,69,58,0.3);
+            border-radius: 20px;
+            color: #ff6b6b;
+            cursor: pointer;
+            font-size: 11px;
+            font-family: var(--font-mono);
+            transition: all 0.3s ease;
+        }
+        .logout-btn:hover {
+            background: rgba(255,69,58,0.2);
+        }
+        .login-btn {
+            padding: 5px 12px;
+            background: linear-gradient(135deg, var(--pink), var(--purple));
+            border-radius: 20px;
+            color: white;
+            text-decoration: none;
+            font-size: 11px;
+            font-family: var(--font-mono);
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        .login-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 0 10px var(--pink-glow);
+        }
+
+        .hamburger {
+            display: none; flex-direction: column; gap: 5px;
+            cursor: pointer; padding: 4px; border: none; background: transparent;
+        }
+        .hamburger span {
+            display: block; width: 24px; height: 2px;
+            background: var(--text-2); border-radius: 2px; transition: all .3s ease;
+        }
+
+        @media (max-width: 680px) {
+            .nav-links { display: none; }
+            .nav-cta   { display: none; }
+            .nav-user  { display: none; }
+            .hamburger { display: flex; }
+            nav.open .nav-links {
+                display: flex; flex-direction: column;
+                position: absolute; top: var(--nav-h); left: 0; right: 0;
+                background: rgba(8,0,16,.97);
+                border-bottom: 1px solid var(--border);
+                padding: 16px; gap: 8px;
+            }
+            nav.open .nav-links .nav-link { padding: 10px 16px; font-size: 14px; }
+        }
+
+        .hero {
+            position: relative; z-index: 1; min-height: 100vh;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            text-align: center;
+            padding: calc(var(--nav-h) + 48px) clamp(20px,5vw,60px) 64px;
+        }
+
+        .hero-pill {
+            display: inline-flex; align-items: center; gap: 8px;
+            background: rgba(255,45,155,.1); border: 1px solid var(--border-hi);
+            padding: 5px 14px; border-radius: 100px;
+            font-family: var(--font-mono); font-size: 10px; color: var(--pink-2);
+            letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 28px;
+        }
+        .hero-pill-dot {
+            width: 6px; height: 6px; background: var(--green); border-radius: 50%;
+            animation: pulse-dot 1.8s ease infinite;
+        }
+        @keyframes pulse-dot {
+            0%,100% { opacity: 1; transform: scale(1); }
+            50%      { opacity: .4; transform: scale(.7); }
+        }
+
+        .hero-title {
+            font-size: clamp(52px, 10vw, 108px); font-weight: 700;
+            line-height: .92; letter-spacing: -3px; margin-bottom: 24px;
+        }
+        .hero-title-1 { display: block; color: var(--text); }
+        .hero-title-2 {
+            display: block;
+            background: linear-gradient(90deg, var(--pink), var(--purple-2), var(--pink-2));
+            background-size: 200%;
+            -webkit-background-clip: text; background-clip: text; color: transparent;
+            animation: shimmer 3.5s linear infinite;
+        }
+        @keyframes shimmer { to { background-position: 200% center; } }
+
+        .hero-sub {
+            font-size: clamp(14px, 2.5vw, 18px); color: var(--text-2);
+            max-width: 480px; line-height: 1.65; margin-bottom: 44px;
+        }
+
+        .hero-btns { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+
+        .btn-primary {
+            display: inline-flex; align-items: center; gap: 8px;
+            background: linear-gradient(135deg, var(--pink), var(--purple));
+            color: #fff; padding: 14px 30px; border-radius: var(--radius-md);
+            text-decoration: none; font-size: 14px; font-weight: 700;
+            letter-spacing: .4px; text-transform: uppercase; transition: all .3s ease;
+            box-shadow: 0 0 24px var(--pink-glow), 0 4px 20px rgba(0,0,0,.4);
+        }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 0 36px var(--pink-glow), 0 8px 30px rgba(0,0,0,.5); }
+
+        .btn-secondary {
+            display: inline-flex; align-items: center; gap: 8px;
+            background: transparent; color: var(--purple-2); padding: 13px 28px;
+            border-radius: var(--radius-md); text-decoration: none;
+            font-size: 14px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase;
+            border: 1px solid rgba(192,0,255,.4); transition: all .3s ease;
+        }
+        .btn-secondary:hover { background: rgba(192,0,255,.1); border-color: var(--purple); box-shadow: 0 0 20px rgba(192,0,255,.2); }
+
+        .terminal-wrap {
+            position: relative; z-index: 1;
+            padding: 0 clamp(16px,5vw,60px) 80px;
+        }
+        .terminal {
+            max-width: 680px; margin: 0 auto; background: #070010;
+            border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden;
+            box-shadow: 0 0 50px rgba(192,0,255,.12), 0 0 100px rgba(255,45,155,.06), 0 20px 60px rgba(0,0,0,.6);
+        }
+        .terminal-bar {
+            background: var(--surface-2); padding: 12px 18px;
+            display: flex; align-items: center; gap: 8px;
+            border-bottom: 1px solid var(--border);
+        }
+        .term-dot { width: 12px; height: 12px; border-radius: 50%; }
+        .td-r { background: #ff5f57; } .td-y { background: #febc2e; } .td-g { background: #28c840; }
+        .terminal-title { flex: 1; text-align: center; font-family: var(--font-mono); font-size: 11px; color: var(--text-3); }
+        .terminal-body { padding: 24px; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.9; overflow-x: auto; }
+        .tc-dim    { color: var(--text-3); }
+        .tc-pink   { color: var(--pink-2); }
+        .tc-purple { color: var(--purple-2); }
+        .tc-yellow { color: var(--yellow); }
+        .tc-green  { color: var(--green); }
+        .tc-white  { color: var(--text); }
+
+        .section { position: relative; z-index: 1; padding: 80px clamp(16px,5vw,60px); }
+        .section-inner { max-width: 1120px; margin: 0 auto; }
+        .section-eyebrow {
+            font-family: var(--font-mono); font-size: 10px; letter-spacing: 3px;
+            color: var(--pink); text-transform: uppercase; margin-bottom: 12px;
+        }
+        .section-heading {
+            font-size: clamp(26px, 3.5vw, 40px); font-weight: 700;
+            letter-spacing: -1px; color: var(--text); margin-bottom: 52px;
+        }
+
+        .features-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
+        .feature-card {
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: var(--radius-lg); padding: 32px 28px;
+            position: relative; overflow: hidden; transition: all .3s ease;
+        }
+        .feature-card::before {
+            content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+            background: linear-gradient(90deg, var(--pink), var(--purple));
+            opacity: 0; transition: opacity .3s ease;
+        }
+        .feature-card:hover { border-color: var(--border-hi); transform: translateY(-5px); box-shadow: 0 10px 40px rgba(255,45,155,.12); }
+        .feature-card:hover::before { opacity: 1; }
+        .feat-num { font-family: var(--font-mono); font-size: 10px; letter-spacing: 2px; color: var(--text-3); margin-bottom: 14px; }
+        .feat-icon svg {
+            width: 40px;
+            height: 40px;
+            stroke: var(--pink-2);
+            fill: none;
+            margin-bottom: 20px;
+        }
+        .feature-card h3 { font-size: 20px; font-weight: 700; color: var(--text); margin-bottom: 12px; }
+        .feature-card p { font-size: 13px; color: var(--text-2); line-height: 1.7; }
+
+        .stats-section {
+            position: relative; z-index: 1;
+            padding: 0 clamp(16px,5vw,60px) 80px;
+        }
+        .stats-section-inner { max-width: 1120px; margin: 0 auto; }
+        .stats-header {
+            display: flex; align-items: center; justify-content: space-between;
+            flex-wrap: wrap; gap: 12px; margin-bottom: 20px;
+        }
+        .stats-eyebrow {
+            font-family: var(--font-mono); font-size: 10px; letter-spacing: 3px;
+            color: var(--pink); text-transform: uppercase; margin-bottom: 6px;
+        }
+        .stats-title { font-size: clamp(20px, 3vw, 28px); font-weight: 700; letter-spacing: -1px; }
+        .stats-live-badge {
+            display: inline-flex; align-items: center; gap: 7px;
+            background: rgba(0,245,160,.1); border: 1px solid rgba(0,245,160,.25);
+            padding: 6px 14px; border-radius: 100px;
+            font-family: var(--font-mono); font-size: 10px; color: var(--green);
+            letter-spacing: 1px;
+        }
+        .live-dot { width: 5px; height: 5px; background: var(--green); border-radius: 50%; animation: pulse-dot 1.8s ease infinite; }
+
+        .stats-main-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 14px;
+            margin-bottom: 14px;
+        }
+        .stat-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 24px 20px;
+            position: relative;
+            overflow: hidden;
+            transition: all .3s ease;
+        }
+        .stat-card:hover { border-color: var(--border-hi); transform: translateY(-3px); box-shadow: 0 8px 30px rgba(255,45,155,.1); }
+        .stat-card-accent {
+            position: absolute; top: 0; left: 0; right: 0; height: 2px;
+        }
+        .accent-pink   { background: linear-gradient(90deg, var(--pink), var(--pink-2)); }
+        .accent-purple { background: linear-gradient(90deg, var(--purple), var(--purple-2)); }
+        .accent-green  { background: linear-gradient(90deg, var(--green), #00d4ff); }
+        .accent-yellow { background: linear-gradient(90deg, var(--yellow), #ffb347); }
+
+        .stat-card-icon svg {
+            width: 22px;
+            height: 22px;
+            margin-bottom: 14px;
+            stroke: var(--text-2);
+            fill: none;
+        }
+        .stat-card-label {
+            font-family: var(--font-mono); font-size: 9px; letter-spacing: 2px;
+            color: var(--text-3); text-transform: uppercase; margin-bottom: 8px;
+        }
+        .stat-card-value {
+            font-size: clamp(28px, 4vw, 40px); font-weight: 700; letter-spacing: -1.5px;
+            line-height: 1; color: var(--text);
+            transition: all .4s ease;
+        }
+        .stat-card-value.loading {
+            background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2));
+            background-size: 200%;
+            -webkit-background-clip: text; background-clip: text; color: transparent;
+            animation: skeleton 1.5s linear infinite;
+            min-width: 80px;
+        }
+        @keyframes skeleton { to { background-position: -200% center; } }
+        .stat-card-sub {
+            font-size: 11px; color: var(--text-3); margin-top: 6px;
+            font-family: var(--font-mono);
+        }
+        .uptime-bar-wrap {
+            margin-top: 10px;
+            height: 4px; background: rgba(180,80,255,.15);
+            border-radius: 2px; overflow: hidden;
+        }
+        .uptime-bar-fill {
+            height: 100%; border-radius: 2px;
+            background: linear-gradient(90deg, var(--green), #00d4ff);
+            width: 0%; transition: width 1s ease;
+        }
+
+        .speed-section {
+            position: relative; z-index: 1;
+            padding: 0 clamp(16px,5vw,60px) 80px;
+        }
+        .speed-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 14px;
+            margin-bottom: 14px;
+        }
+        .speed-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
+            transition: all .3s ease;
+            text-align: center;
+        }
+        .speed-card:hover {
+            border-color: var(--border-hi);
+            transform: translateY(-3px);
+            box-shadow: 0 8px 30px rgba(255,45,155,.1);
+        }
+        .speed-icon svg {
+            width: 28px;
+            height: 28px;
+            margin-bottom: 10px;
+            stroke: var(--text-2);
+            fill: none;
+        }
+        .speed-label {
+            font-family: var(--font-mono);
+            font-size: 9px;
+            letter-spacing: 2px;
+            color: var(--text-3);
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+        .speed-value {
+            font-size: clamp(32px, 5vw, 48px);
+            font-weight: 700;
+            letter-spacing: -2px;
+            line-height: 1;
+            color: var(--text);
+            transition: all .2s ease;
+        }
+        .speed-unit {
+            font-size: 14px;
+            font-weight: 400;
+            color: var(--text-3);
+            margin-left: 4px;
+        }
+        .speed-sub {
+            font-size: 10px;
+            color: var(--text-3);
+            margin-top: 8px;
+            font-family: var(--font-mono);
+        }
+        .trend-up { color: var(--green); animation: pulse-up 0.8s ease; }
+        .trend-down { color: var(--pink); animation: pulse-down 0.8s ease; }
+        @keyframes pulse-up { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.6; transform: scale(1.1); } }
+        @keyframes pulse-down { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.6; transform: scale(0.9); } }
+        .spark-line {
+            margin-top: 12px;
+            height: 24px;
+            display: flex;
+            align-items: flex-end;
+            gap: 2px;
+            justify-content: center;
+        }
+        .spark-bar {
+            width: 3px;
+            background: linear-gradient(180deg, var(--pink), var(--purple));
+            border-radius: 2px;
+            transition: height 0.3s ease;
+            opacity: 0.7;
+        }
+
+        .ep-table-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+            margin-top: 14px;
+        }
+        .ep-table-header {
+            padding: 14px 20px;
+            background: var(--surface-2);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .ep-table-title {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            letter-spacing: 2px;
+            color: var(--text-2);
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .ep-table-title svg {
+            width: 14px;
+            height: 14px;
+            stroke: var(--text-2);
+        }
+        .ep-table-refresh {
+            font-family: var(--font-mono);
+            font-size: 9px;
+            color: var(--text-3);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .ep-list { padding: 8px 0; }
+        .ep-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 20px;
+            transition: background .2s;
+        }
+        .ep-row:hover { background: rgba(255,45,155,.04); }
+        .ep-badge {
+            font-family: var(--font-mono);
+            font-size: 9px;
+            font-weight: 700;
+            padding: 2px 7px;
+            border-radius: 4px;
+            flex-shrink: 0;
+            background: rgba(0,212,255,.12);
+            color: var(--cyan);
+            border: 1px solid rgba(0,212,255,.2);
+        }
+        .ep-name {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-2);
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .ep-count {
+            font-family: var(--font-mono);
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--pink-2);
+            flex-shrink: 0;
+        }
+        .ep-bar-wrap {
+            width: 80px;
+            height: 3px;
+            background: rgba(180,80,255,.15);
+            border-radius: 2px;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+        .ep-bar-fill {
+            height: 100%;
+            border-radius: 2px;
+            background: linear-gradient(90deg, var(--pink), var(--purple));
+            transition: width .8s ease;
+        }
+        .ep-empty {
+            padding: 24px 20px;
+            text-align: center;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-3);
+        }
+        @media (max-width: 500px) {
+            .ep-bar-wrap { display: none; }
+            .stats-main-grid { grid-template-columns: 1fr 1fr; }
+            .speed-grid { grid-template-columns: 1fr 1fr; }
+        }
+
+        footer {
+            position: relative; z-index: 1;
+            border-top: 1px solid var(--border);
+            padding: 24px clamp(16px,5vw,40px);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 14px;
+            font-size: 13px;
+            color: var(--text-3);
+        }
+        .footer-links { display: flex; gap: 20px; flex-wrap: wrap; }
+        footer a { color: var(--text-2); text-decoration: none; transition: color .2s; }
+        footer a:hover { color: var(--pink-2); }
+        #last-updated { font-family: var(--font-mono); font-size: 9px; color: var(--text-3); }
+    </style>
+</head>
+<body>
+    <div class="bg-grid"></div>
+    <div class="bg-orb bg-orb-1"></div>
+    <div class="bg-orb bg-orb-2"></div>
+    <div class="bg-orb bg-orb-3"></div>
+
+    <nav id="main-nav">
+        <a href="/" class="nav-logo">
+            <span class="logo-gem"></span>
+            <span class="logo-text">DLYYZ</span>
+        </a>
+        <div class="nav-links">
+            <a href="/"       class="nav-link active">Home</a>
+            <a href="/docs"   class="nav-link">API Docs</a>
+            <a href="/support" class="nav-link">Support</a>
+            <a href="/docs"    class="nav-cta">Docs</a>
+        </div>
+        <div class="nav-user" id="navUser">
+            <span class="user-name" id="userName"></span>
+            <a href="/profile" class="profile-link" id="profileLink" style="display: none;">
+                <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+                    <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0 0a8.949 8.949 0 0 0 4.951-1.488A3.987 3.987 0 0 0 13 16h-2a3.987 3.987 0 0 0-3.951 3.512A8.948 8.948 0 0 0 12 21Zm3-11a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>
+                </svg>
+                Profile
+            </a>
+            <button class="logout-btn" id="logoutBtn" style="display: none;">Logout</button>
+            <a href="/login" class="login-btn" id="loginBtn">Login</a>
+        </div>
+        <button class="hamburger" id="hamburger" aria-label="Menu">
+            <span></span><span></span><span></span>
+        </button>
+    </nav>
+
+    <section class="hero">
+        <div class="hero-pill">
+            <span class="hero-pill-dot"></span>
+            LIVE · v3.0 · REALTIME API
+        </div>
+        <h1 class="hero-title">
+            <span class="hero-title-1">DLYYZ</span>
+            <span class="hero-title-2">REST API</span>
+        </h1>
+        <p class="hero-sub">Solusi API powerful untuk Alight Motion Premium, Game Validator & MLBB Complete Checker.</p>
+        <div class="hero-btns">
+            <a href="/docs" class="btn-primary">Lihat Dokumentasi</a>
+            <a href="/support" class="btn-secondary">Beli API Key</a>
+        </div>
+    </section>
+
+    <div class="terminal-wrap">
+        <div class="terminal">
+            <div class="terminal-bar">
+                <span class="term-dot td-r"></span>
+                <span class="term-dot td-y"></span>
+                <span class="term-dot td-g"></span>
+                <span class="terminal-title">dlyyz-api ~ curl request</span>
+            </div>
+            <div class="terminal-body">
+                <div><span class="tc-dim">$</span> <span class="tc-pink">curl</span> <span class="tc-white">"https://dlyyz-rest.my.id/api/status</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="tc-purple">?action=</span><span class="tc-yellow">dlyyzstore</span><span class="tc-purple">&apikey=</span><span class="tc-green">YOUR_KEY</span><span class="tc-white">"</span></div>
+                <div>&nbsp;</div>
+                <div><span class="tc-dim"># Response:</span></div>
+                <div><span class="tc-purple">{</span></div>
+                <div>&nbsp;&nbsp;<span class="tc-pink">"status"</span><span class="tc-white">:</span> <span class="tc-green">true</span><span class="tc-white">,</span></div>
+                <div>&nbsp;&nbsp;<span class="tc-pink">"service"</span><span class="tc-white">:</span> <span class="tc-yellow">"DLYYZ REST API"</span><span class="tc-white">,</span></div>
+                <div>&nbsp;&nbsp;<span class="tc-pink">"version"</span><span class="tc-white">:</span> <span class="tc-yellow">"3.0.0"</span><span class="tc-white">,</span></div>
+                <div>&nbsp;&nbsp;<span class="tc-pink">"uptime"</span><span class="tc-white">:</span> <span class="tc-yellow">"99.99%"</span></div>
+                <div><span class="tc-purple">}</span></div>
+            </div>
+        </div>
+    </div>
+
+    <section class="section" style="text-align:center;">
+        <div class="section-inner">
+            <div class="section-eyebrow">// Premium Features</div>
+            <div class="section-heading">Powerful API Services</div>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feat-num">01 —</div>
+                    <div class="feat-icon">
+                        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 4v4a1 1 0 0 0 1 1h4m-3-5H8a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V8.707A1 1 0 0 0 16.707 8L13 4.293A1 1 0 0 0 12.293 4H11m-4 4h2m-2 4h6m-6 4h6"/>
+                        </svg>
+                    </div>
+                    <h3>Alight Motion Auto Purchase</h3>
+                    <p>Purchase Alight Motion Premium secara otomatis dengan sistem satuan maupun bulk. Proses cepat, aman, dan langsung mendapatkan license premium untuk kebutuhan editing profesional Anda.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feat-num">02 —</div>
+                    <div class="feat-icon">
+                        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z"/>
+                        </svg>
+                    </div>
+                    <h3>MLBB Complete Checker</h3>
+                    <p>Cek username & region, status diamond ganda (25+25, 50+50, dll), status bundle elite (Weekly/Monthly), bind status ke berbagai platform (Google, Facebook, Moonton), dan tanggal pembuatan akun MLBB. Lengkap semua kebutuhan Anda.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feat-num">03 —</div>
+                    <div class="feat-icon">
+                        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.5 9.5 18 12l-2.5 2.5m-7 0L6 12l2.5-2.5M12 6.5 9.5 9 12 11.5 14.5 9 12 6.5Z"/>
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z"/>
+                        </svg>
+                    </div>
+                    <h3>Game Validator</h3>
+                    <p>Validasi akun game populer seperti Roblox, Genshin Impact, PUBG Mobile, Free Fire, dan COD Mobile. Cepat dan akurat untuk berbagai keperluan.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <div class="stats-section">
+        <div class="stats-section-inner">
+            <div class="stats-header">
+                <div class="stats-title-group">
+                    <div class="stats-eyebrow">// Live Statistics</div>
+                    <div class="stats-title">Statistik Real-time</div>
+                </div>
+                <div class="stats-live-badge">
+                    <span class="live-dot"></span>
+                    AUTO REFRESH · 1s
+                </div>
+            </div>
+
+            <div class="stats-main-grid">
+                <div class="stat-card">
+                    <div class="stat-card-accent accent-pink"></div>
+                    <div class="stat-card-icon">
+                        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+                            <path stroke="currentColor" stroke-width="2" d="M21 12c0 1.2-4.03 6-9 6s-9-4.8-9-6c0-1.2 4.03-6 9-6s9 4.8 9 6Z"/>
+                            <path stroke="currentColor" stroke-width="2" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>
+                        </svg>
+                    </div>
+                    <div class="stat-card-label">Page Visits</div>
+                    <div class="stat-card-value loading" id="stat-visits">—</div>
+                    <div class="stat-card-sub">sejak server start</div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-card-accent accent-purple"></div>
+                    <div class="stat-card-icon">
+                        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364-.707-.707M6.343 6.343l-.707-.707m12.728 0-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z"/>
+                        </svg>
+                    </div>
+                    <div class="stat-card-label">API Hits</div>
+                    <div class="stat-card-value loading" id="stat-hits">—</div>
+                    <div class="stat-card-sub">total request masuk</div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-card-accent accent-green"></div>
+                    <div class="stat-card-icon">
+                        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z"/>
+                        </svg>
+                    </div>
+                    <div class="stat-card-label">Uptime</div>
+                    <div class="stat-card-value loading" id="stat-uptime" style="font-size: clamp(18px,3vw,28px);">—</div>
+                    <div class="uptime-bar-wrap">
+                        <div class="uptime-bar-fill" id="uptime-bar"></div>
+                    </div>
+                    <div class="stat-card-sub" id="stat-started">memuat...</div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-card-accent accent-yellow"></div>
+                    <div class="stat-card-icon">
+                        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 0 1-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8Z"/>
+                        </svg>
+                    </div>
+                    <div class="stat-card-label">Endpoints Aktif</div>
+                    <div class="stat-card-value loading" id="stat-endpoints">—</div>
+                    <div class="stat-card-sub">pernah di-hit</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="speed-section">
+        <div class="stats-section-inner">
+            <div class="stats-header">
+                <div class="stats-title-group">
+                    <div class="stats-eyebrow">// Realtime Rate</div>
+                    <div class="stats-title">Kecepatan Request</div>
+                </div>
+                <div class="stats-live-badge">
+                    <span class="live-dot"></span>
+                    REAL-TIME · LIVE
+                </div>
+            </div>
+
+            <div class="speed-grid">
+                <div class="speed-card">
+                    <div class="speed-icon">
+                        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h6l-6 7h6m-8 3H5l5-7H5"/>
+                        </svg>
+                    </div>
+                    <div class="speed-label">Request Per Second</div>
+                    <div class="speed-value">
+                        <span id="rps-value">0.00</span>
+                        <span class="speed-unit">RPS</span>
+                    </div>
+                    <div class="speed-sub">rata-rata 60 detik</div>
+                    <div class="spark-line" id="rps-spark"></div>
+                </div>
+
+                <div class="speed-card">
+                    <div class="speed-icon">
+                        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6l4 2"/>
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z"/>
+                        </svg>
+                    </div>
+                    <div class="speed-label">Request Per Minute</div>
+                    <div class="speed-value">
+                        <span id="rpm-value">0</span>
+                        <span class="speed-unit">RPM</span>
+                    </div>
+                    <div class="speed-sub">proyeksi per menit</div>
+                </div>
+
+                <div class="speed-card">
+                    <div class="speed-icon">
+                        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z"/>
+                        </svg>
+                    </div>
+                    <div class="speed-label">Peak RPS (60s)</div>
+                    <div class="speed-value">
+                        <span id="peak-value">0</span>
+                        <span class="speed-unit">req/s</span>
+                    </div>
+                    <div class="speed-sub">kecepatan tertinggi</div>
+                </div>
+
+                <div class="speed-card">
+                    <div class="speed-icon">
+                        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
+                        </svg>
+                    </div>
+                    <div class="speed-label">Hits (Last 60s)</div>
+                    <div class="speed-value">
+                        <span id="hits60-value">0</span>
+                        <span class="speed-unit">request</span>
+                    </div>
+                    <div class="speed-sub">dalam 1 menit terakhir</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="stats-section">
+        <div class="stats-section-inner">
+            <div class="ep-table-card">
+                <div class="ep-table-header">
+                    <div class="ep-table-title">
+                        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15v4m6-6v6m6-4v4m6-6v6M3 11l6-4 6 4 6-4M3 11l6 4 6-4 6 4"/>
+                        </svg>
+                        Hit per Endpoint
+                    </div>
+                    <div class="ep-table-refresh">
+                        <span id="last-updated">memuat...</span>
+                    </div>
+                </div>
+                <div class="ep-list" id="ep-list">
+                    <div class="ep-empty">Memuat data...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <span>2026 <strong>DLYYZ REST API</strong>. All rights reserved.</span>
+        <div class="footer-links">
+            <a href="/docs">API Docs</a>
+            <a href="/support">Support</a>
+            <a href="https://wa.me/6285691259261" target="_blank">WhatsApp</a>
+        </div>
+    </footer>
+
+    <script>
+        const nav = document.getElementById('main-nav');
+        const hamburger = document.getElementById('hamburger');
+        if (hamburger) {
+            hamburger.addEventListener('click', () => nav.classList.toggle('open'));
+        }
+
+        function updateAuthUI() {
+            const token = localStorage.getItem('token');
+            const userStr = localStorage.getItem('user');
+            const userNameSpan = document.getElementById('userName');
+            const profileLink = document.getElementById('profileLink');
+            const logoutBtn = document.getElementById('logoutBtn');
+            const loginBtn = document.getElementById('loginBtn');
+
+            if (token && userStr) {
+                try {
+                    const user = JSON.parse(userStr);
+                    userNameSpan.textContent = user.name || user.username || user.email || '';
+                    profileLink.style.display = 'flex';
+                    logoutBtn.style.display = 'block';
+                    loginBtn.style.display = 'none';
+                } catch(e) {
+                    console.error(e);
+                }
+            } else {
+                userNameSpan.textContent = '';
+                profileLink.style.display = 'none';
+                logoutBtn.style.display = 'none';
+                loginBtn.style.display = 'block';
+            }
+        }
+
+        document.getElementById('logoutBtn')?.addEventListener('click', () => {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            window.location.href = '/';
+        });
+
+        function animateCount(el, target) {
+            if (!el) return;
+            const start = parseInt(el.dataset.current || '0');
+            const diff = target - start;
+            if (diff === 0) return;
+            const duration = 600;
+            const steps = 30;
+            let step = 0;
+            const timer = setInterval(() => {
+                step++;
+                const progress = step / steps;
+                const ease = 1 - Math.pow(1 - progress, 3);
+                el.textContent = Math.round(start + diff * ease).toLocaleString('id-ID');
+                if (step >= steps) {
+                    clearInterval(timer);
+                    el.textContent = target.toLocaleString('id-ID');
+                    el.dataset.current = target;
+                }
+            }, duration / steps);
+        }
+
+        function formatTime(isoStr) {
+            const d = new Date(isoStr);
+            return d.toLocaleString('id-ID', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+        }
+
+        let rpsHistory = [];
+        let lastRealtimeData = null;
+
+        function updateSparkline(rps) {
+            rpsHistory.push(rps);
+            if (rpsHistory.length > 20) rpsHistory.shift();
+            const sparkDiv = document.getElementById('rps-spark');
+            if (!sparkDiv) return;
+            const maxRPS = Math.max(...rpsHistory, 0.1);
+            sparkDiv.innerHTML = rpsHistory.map(val => {
+                const height = (val / maxRPS) * 20;
+                return `<div class="spark-bar" style="height: ${Math.max(3, height)}px"></div>`;
+            }).join('');
+        }
+
+        function animateWithTrend(elementId, newValue, oldValue, isRPS = false) {
+            const element = document.getElementById(elementId);
+            if (!element) return;
+            if (oldValue !== undefined && newValue !== oldValue) {
+                const trendClass = newValue > oldValue ? 'trend-up' : 'trend-down';
+                element.classList.add(trendClass);
+                setTimeout(() => element.classList.remove(trendClass), 800);
+            }
+            const currentText = element.textContent;
+            const start = isRPS ? parseFloat(currentText) || 0 : parseInt(currentText) || 0;
+            const diff = newValue - start;
+            if (Math.abs(diff) < 0.01 && isRPS) {
+                element.textContent = newValue.toFixed(2);
+                return;
+            }
+            if (Math.abs(diff) < 1 && !isRPS) {
+                element.textContent = Math.round(newValue);
+                return;
+            }
+            const duration = 300;
+            const startTime = performance.now();
+            function animate(now) {
+                const elapsed = now - startTime;
+                const progress = Math.min(1, elapsed / duration);
+                const ease = 1 - Math.pow(1 - progress, 3);
+                const current = start + diff * ease;
+                if (isRPS) {
+                    element.textContent = current.toFixed(2);
+                } else {
+                    element.textContent = Math.round(current);
+                }
+                if (progress < 1) {
+                    requestAnimationFrame(animate);
+                } else {
+                    element.textContent = isRPS ? newValue.toFixed(2) : Math.round(newValue);
+                }
+            }
+            requestAnimationFrame(animate);
+        }
+
+        async function fetchStats() {
+            try {
+                const res = await fetch('/api/siteStats');
+                const data = await res.json();
+                if (!data.status) return;
+
+                ['stat-visits','stat-hits','stat-uptime','stat-endpoints'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.classList.remove('loading');
+                });
+
+                const visitsEl = document.getElementById('stat-visits');
+                const hitsEl = document.getElementById('stat-hits');
+                const endpointsEl = document.getElementById('stat-endpoints');
+                
+                if (visitsEl) animateCount(visitsEl, data.visits);
+                if (hitsEl) animateCount(hitsEl, data.apiHits);
+                if (endpointsEl) animateCount(endpointsEl, Object.keys(data.endpoints).length);
+
+                const uptimeEl = document.getElementById('stat-uptime');
+                if (uptimeEl) uptimeEl.textContent = data.uptime;
+                
+                const pct = Math.min((data.uptimeMs / 604800000) * 100, 100);
+                const uptimeBar = document.getElementById('uptime-bar');
+                if (uptimeBar) uptimeBar.style.width = pct + '%';
+                
+                const startedEl = document.getElementById('stat-started');
+                if (startedEl) startedEl.textContent = 'sejak ' + formatTime(data.startTime);
+
+                if (data.realtime) {
+                    const rt = data.realtime;
+                    const oldRPS = lastRealtimeData?.realtime?.rps || 0;
+                    animateWithTrend('rps-value', rt.rps, oldRPS, true);
+                    animateWithTrend('rpm-value', rt.rpm, oldRPS, false);
+                    animateWithTrend('peak-value', rt.peakRPS, lastRealtimeData?.realtime?.peakRPS || 0, false);
+                    animateWithTrend('hits60-value', rt.hitsLast60s, lastRealtimeData?.realtime?.hitsLast60s || 0, false);
+                    updateSparkline(rt.rps);
+                }
+
+                const epList = document.getElementById('ep-list');
+                const epEntries = Object.entries(data.endpoints);
+                
+                if (epEntries.length === 0) {
+                    if (epList) epList.innerHTML = '<div class="ep-empty">Belum ada API hit sejak server start.</div>';
+                } else {
+                    const sorted = epEntries.sort((a,b) => b[1] - a[1]);
+                    const maxHits = sorted[0][1];
+                    if (epList) {
+                        epList.innerHTML = sorted.map(([path, count]) => `
+                            <div class="ep-row">
+                                <span class="ep-badge">GET</span>
+                                <span class="ep-name">${escapeHtml(path)}</span>
+                                <div class="ep-bar-wrap">
+                                    <div class="ep-bar-fill" style="width:${(count/maxHits*100).toFixed(1)}%"></div>
+                                </div>
+                                <span class="ep-count">${count.toLocaleString('id-ID')}</span>
+                            </div>
+                        `).join('');
+                    }
+                }
+
+                const lastUpdated = document.getElementById('last-updated');
+                if (lastUpdated) {
+                    lastUpdated.textContent = 'updated ' + new Date().toLocaleTimeString('id-ID');
+                }
+                lastRealtimeData = data;
+            } catch(e) {
+                console.warn('Stats fetch error:', e.message);
+            }
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/[&<>]/g, function(m) {
+                if (m === '&') return '&amp;';
+                if (m === '<') return '&lt;';
+                if (m === '>') return '&gt;';
+                return m;
+            });
+        }
+
+        updateAuthUI();
+        fetchStats();
+        setInterval(fetchStats, 1000);
+    </script>
+</body>
+</html>

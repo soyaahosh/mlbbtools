@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Ketupat - MLBB Tools</title>
+  <meta name="theme-color" content="#ffffff">
+  <!-- Google Material Symbols Outlined -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-viewport">
+    
+    <!-- Moving Animated Background Layer -->
+    <div class="animated-bg-layer" aria-hidden="true">
+      <div class="bg-orb orb-1"></div>
+      <div class="bg-orb orb-2"></div>
+      <div class="bg-orb orb-3"></div>
+    </div>
+
+    <!-- 0. BLOCKED SCREEN (Emulators / Cloned Apps) -->
+    <div id="screenBlocked" class="screen-view">
+      <div class="auth-wrapper flex-center-all text-center">
+        <div class="app-icon-small icon-blocked">
+          <span class="material-symbols-outlined">block</span>
+        </div>
+        <h2 class="auth-title text-danger">Access Restricted</h2>
+        <p id="blockReasonText" class="auth-desc max-w-sm">
+          For fraud prevention, Ketupat cannot run inside an emulator or cloned app. Please use a physical Android phone.
+        </p>
+      </div>
+    </div>
+    
+    <!-- 1. SPLASH SCREEN -->
+    <div id="screenSplash" class="screen-view active">
+      <div class="splash-content">
+        <div class="splash-logo">
+          <span class="material-symbols-outlined icon-splash">diamond</span>
+        </div>
+        <h1 class="splash-title">Ketupat</h1>
+        <p class="splash-subtitle">MLBB Tools & Diamond Giveaway</p>
+      </div>
+    </div>
+
+    <!-- 2. STANDALONE MLBB VALIDATION SCREEN (FIRST AFTER SPLASH) -->
+    <div id="screenMlbbValidate" class="screen-view">
+      <div class="auth-wrapper">
+        <div class="auth-header text-center">
+          <div class="app-icon-small mx-auto">
+            <span class="material-symbols-outlined">diamond</span>
+          </div>
+          <h2 class="auth-title">Validate MLBB Account</h2>
+          <p class="auth-desc">Enter your Mobile Legends: Bang Bang ID and Server to verify account information & check all platform binds.</p>
+        </div>
+
+        <form id="formMlbbValidate" class="form-container">
+          <!-- MLBB ID & Zone inputs -->
+          <div class="form-group">
+            <label class="form-label">MLBB Account Credentials</label>
+            <div class="form-row">
+              <div class="form-group flex-2">
+                <input type="number" id="inputMlbbUserId" class="form-input" placeholder="User ID" required>
+              </div>
+              <div class="form-group flex-1">
+                <input type="number" id="inputMlbbServerId" class="form-input" placeholder="Zone ID" required>
+              </div>
+            </div>
+          </div>
+
+          <div id="mlbbValidateStatus" class="status-msg hidden"></div>
+
+          <!-- Primary Submit Button -->
+          <button type="submit" id="btnSubmitMlbbValidate" class="btn btn-primary">
+            <span class="material-symbols-outlined btn-icon">verified_user</span>
+            <span>Verify MLBB Account</span>
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- 3. DEDICATED ACCOUNT BIND INFO SCREEN (AFTER VALIDATION) -->
+    <div id="screenBindInfo" class="screen-view">
+      <!-- Screen Header with Back / Re-enter button -->
+      <div class="bind-screen-header">
+        <button type="button" id="btnBackToValidate" class="btn-icon-back" title="Change MLBB Account">
+          <span class="material-symbols-outlined">arrow_back</span>
+        </button>
+        <div class="bind-header-title">Account Bind Details</div>
+        <div></div>
+      </div>
+
+      <div class="bind-wrapper scrollable">
+        <!-- 1. Player Profile Hero Card -->
+        <div class="bind-player-hero">
+          <div class="player-avatar-wrap">
+            <img id="bindPlayerAvatar" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23cbd5e1'%3E%3Ccircle cx='12' cy='8' r='4'/%3E%3Cpath d='M20 21a8 8 0 0 0-16 0'/%3E%3C/svg%3E" alt="Avatar" class="bind-avatar-img">
+            <div class="player-avatar-badge">
+              <span class="material-symbols-outlined">verified</span>
+            </div>
+          </div>
+          <div class="player-hero-details">
+            <div class="player-hero-name" id="bindPlayerIgn">—</div>
+            <div class="player-hero-tags">
+              <span class="badge-id-pill" id="bindPlayerIdTag">ID: —</span>
+              <span class="badge-region-pill">
+                <img id="bindPlayerFlagImg" src="" alt="Flag" class="flag-icon hidden">
+                <span id="bindPlayerRegionName">—</span>
+              </span>
+            </div>
+            <div class="api-verified-pill">
+              <span class="material-symbols-outlined icon-verified">check_circle</span>
+              <span id="bindVerifiedSource">Account Verified ✓</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. Account Bind Grid Cards -->
+        <div class="bind-section">
+          <div class="bind-section-header">
+            <span class="material-symbols-outlined icon-section">link</span>
+            <div>
+              <h3 class="bind-section-title">Platform Bind Status</h3>
+              <p class="bind-section-sub">Connected login providers & platform bindings</p>
+            </div>
+          </div>
+
+          <div class="bind-cards-grid" id="bindCardsGrid">
+            <!-- Dynamically populated: ONLY linked platform data from DlyyZ API -->
+          </div>
+        </div>
+
+        <!-- 3. Mandatory Avatar / Photo Customization -->
+        <div class="bind-photo-section flex-between" id="bindPhotoSection">
+          <div>
+            <div class="bind-photo-label">Profile Avatar <span class="required-indicator" style="color:#ef4444;font-weight:700;">*</span></div>
+            <div class="input-helper" id="bindAvatarHelper">Avatar photo is required to continue</div>
+          </div>
+          <button type="button" id="btnChooseBindPhoto" class="btn-gallery-select">
+            <span class="material-symbols-outlined btn-icon-tiny">photo_camera</span>
+            <span id="btnChooseBindPhotoText">Upload Photo</span>
+          </button>
+          <input type="file" id="bindAvatarInput" accept="image/*" class="file-input-hidden">
+        </div>
+
+        <!-- 4. Enter / Continue to Ketupat Button -->
+        <div class="bind-action-footer">
+          <button type="button" id="btnContinueToApp" class="btn btn-primary btn-large">
+            <span>Continue to Ketupat</span>
+            <span class="material-symbols-outlined btn-icon-right">arrow_forward</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. MAIN APP SCREEN (5 TABS: HOME, GAMES, GIVEAWAY, STORE, PROFILE) -->
+    <div id="screenApp" class="screen-view">
+      <!-- Top Bar -->
+      <header class="top-bar">
+        <div class="top-bar-left">
+          <div class="app-brand-badge">
+            <span class="material-symbols-outlined brand-diamond-icon">diamond</span>
+            <h1 id="appHeaderTitle" class="page-title">Home</h1>
+          </div>
+        </div>
+        <div class="top-bar-right">
+          <!-- Points Balance Pill -->
+          <div class="points-pill" id="btnHeaderPoints" role="button" tabindex="0" title="Your Points">
+            <span class="material-symbols-outlined icon-points">stars</span>
+            <span id="headerPointsCount" class="points-val">100</span>
+          </div>
+          <!-- Profile Avatar Thumbnail -->
+          <img id="topBarAvatar" src="" alt="Avatar" class="top-avatar hidden" role="button" tabindex="0" title="Profile">
+        </div>
+      </header>
+
+      <!-- Main Content Area -->
+      <main class="content-area">
+        
+        <!-- ================= PAGE 1: HOME ================= -->
+        <section id="pageHome" class="page active">
+          <div class="home-container">
+            
+            <!-- User Status Card -->
+            <div class="welcome-card">
+              <div class="welcome-top">
+                <span class="badge-label">Active Member</span>
+              </div>
+              <h2 id="homeWelcomeName" class="welcome-heading">Welcome</h2>
+              <div class="home-account-strip">
+                <img id="homeFlagImg" src="" alt="Flag" class="flag-icon-small hidden">
+                <span id="homeMlbbTag" class="welcome-sub">IGN: —</span>
+                <button type="button" id="btnHomeRefreshIgn" class="btn-icon-refresh-tiny" title="Revalidate IGN from MLBB">
+                  <span class="material-symbols-outlined">sync</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Points & Diamonds Balance Overview -->
+            <div class="balance-card">
+              <div class="balance-main">
+                <div class="balance-item">
+                  <div class="balance-label">Available Points</div>
+                  <div class="balance-row">
+                    <span class="material-symbols-outlined icon-balance-gold">stars</span>
+                    <span id="homePointsCount" class="balance-number">100</span>
+                  </div>
+                </div>
+                <div class="balance-divider"></div>
+                <div class="balance-item">
+                  <div class="balance-label">Diamonds Claimed</div>
+                  <div class="balance-row">
+                    <span class="material-symbols-outlined icon-balance-diamond">diamond</span>
+                    <span id="homeDiamondsCount" class="balance-number">0</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Quick Action Pills -->
+              <div class="balance-actions">
+                <button type="button" id="btnHomeCheckIn" class="btn-action-pill">
+                  <span class="material-symbols-outlined">event_available</span>
+                  <span>Daily Bonus</span>
+                </button>
+                <button type="button" id="btnHomePlayGames" class="btn-action-pill btn-action-primary">
+                  <span class="material-symbols-outlined">sports_esports</span>
+                  <span>Earn Points</span>
+                </button>
+                <button type="button" id="btnHomeRedeem" class="btn-action-pill">
+                  <span class="material-symbols-outlined">redeem</span>
+                  <span>Redeem Store</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Daily Streak Tracker Banner -->
+            <div class="streak-banner" id="bannerStreak" role="button" tabindex="0">
+              <div class="streak-left">
+                <div class="streak-fire-wrap">
+                  <span class="material-symbols-outlined icon-fire">local_fire_department</span>
+                </div>
+                <div class="streak-text-wrap">
+                  <div class="streak-title" id="streakTitleText">Day 1 Streak Active!</div>
+                  <div class="streak-subtitle" id="streakSubtitleText">Check in daily for up to +200 bonus points</div>
+                </div>
+              </div>
+              <button type="button" id="btnClaimStreakPill" class="btn-streak-claim">Claim</button>
+            </div>
+
+            <!-- Featured Mega Giveaway Card -->
+            <div class="featured-giveaway-card">
+              <div class="giveaway-card-badge">
+                <span class="material-symbols-outlined icon-badge-live">timer</span>
+                <span>Active Giveaway</span>
+              </div>
+              <div class="giveaway-card-content">
+                <div class="giveaway-prize-tag">
+                  <span class="material-symbols-outlined icon-giveaway-diamond">diamond</span>
+                  <span class="giveaway-prize-amount">2,500</span>
+                  <span class="giveaway-prize-unit">MLBB Diamonds</span>
+                </div>
+                <p class="giveaway-sub-info">Weekly Grand Raffle • Ends Sunday 23:59</p>
+                
+                <div class="giveaway-timer-strip">
+                  <div class="timer-box">
+                    <span id="homeTimerDays" class="timer-num">03</span>
+                    <span class="timer-lbl">Days</span>
+                  </div>
+                  <span class="timer-colon">:</span>
+                  <div class="timer-box">
+                    <span id="homeTimerHours" class="timer-num">14</span>
+                    <span class="timer-lbl">Hours</span>
+                  </div>
+                  <span class="timer-colon">:</span>
+                  <div class="timer-box">
+                    <span id="homeTimerMins" class="timer-num">28</span>
+                    <span class="timer-lbl">Mins</span>
+                  </div>
+                  <span class="timer-colon">:</span>
+                  <div class="timer-box">
+                    <span id="homeTimerSecs" class="timer-num">45</span>
+                    <span class="timer-lbl">Secs</span>
+                  </div>
+                </div>
+
+                <div class="giveaway-card-foot">
+                  <div class="giveaway-ticket-stat">
+                    <span class="material-symbols-outlined icon-ticket">confirmation_number</span>
+                    <span>Your Tickets: <strong id="homeMyTicketsCount">0</strong></span>
+                  </div>
+                  <button type="button" id="btnHomeEnterGiveaway" class="btn btn-primary btn-sm">
+                    <span>Enter (50 Pts)</span>
+                    <span class="material-symbols-outlined btn-icon-right">arrow_forward</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Quick Navigation Menu Grid -->
+            <div class="section-header">
+              <h3 class="section-title">Explore Ketupat</h3>
+              <span class="section-desc">Earn, Play & Redeem</span>
+            </div>
+
+            <div class="menu-grid">
+              <!-- Menu 1: Mini Games -->
+              <div class="menu-card" id="menuCardGames" role="button" tabindex="0">
+                <div class="menu-icon-wrap icon-theme-blue">
+                  <span class="material-symbols-outlined">sports_esports</span>
+                </div>
+                <div class="menu-card-title">Mini Games</div>
+                <p class="menu-card-desc">Hero Quiz, Lucky Spin & Rush</p>
+                <div class="menu-reward-tag">+30 to +100 Pts</div>
+              </div>
+
+              <!-- Menu 2: Giveaway -->
+              <div class="menu-card" id="menuCardGiveaway" role="button" tabindex="0">
+                <div class="menu-icon-wrap icon-theme-purple">
+                  <span class="material-symbols-outlined">card_giftcard</span>
+                </div>
+                <div class="menu-card-title">Giveaway Raffles</div>
+                <p class="menu-card-desc">Weekly & Daily MLBB Raffles</p>
+                <div class="menu-reward-tag">Win 2,500 💎</div>
+              </div>
+
+              <!-- Menu 3: Redeem Store -->
+              <div class="menu-card" id="menuCardRedeem" role="button" tabindex="0">
+                <div class="menu-icon-wrap icon-theme-emerald">
+                  <span class="material-symbols-outlined">redeem</span>
+                </div>
+                <div class="menu-card-title">Redeem Store</div>
+                <p class="menu-card-desc">Instant MLBB Diamond Packs</p>
+                <div class="menu-reward-tag">From 50 💎</div>
+              </div>
+
+              <!-- Menu 4: Daily Quests -->
+              <div class="menu-card" id="menuCardQuests" role="button" tabindex="0">
+                <div class="menu-icon-wrap icon-theme-amber">
+                  <span class="material-symbols-outlined">task_alt</span>
+                </div>
+                <div class="menu-card-title">Daily Quests</div>
+                <p class="menu-card-desc">Complete tasks for rewards</p>
+                <div class="menu-reward-tag">Up to +160 Pts</div>
+              </div>
+            </div>
+
+            <!-- Recent Winners Feed -->
+            <div class="recent-feed-card">
+              <div class="recent-feed-header">
+                <div class="flex-center-gap">
+                  <span class="material-symbols-outlined icon-trophy-gold">military_tech</span>
+                  <h4 class="recent-feed-title">Recent Lucky Winners</h4>
+                </div>
+                <span class="feed-live-indicator">LIVE</span>
+              </div>
+              <div class="recent-feed-list" id="recentWinnersList">
+                <!-- Dynamically populated -->
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- ================= PAGE 2: MINI GAMES ARCADE ================= -->
+        <section id="pageGames" class="page">
+          <div class="page-inner-container">
+            
+            <div class="page-intro-header">
+              <h2 class="page-heading">Arcade Games</h2>
+              <p class="page-subheading">Play fun MLBB mini games to earn points for diamonds!</p>
+            </div>
+
+            <!-- Arcade Game Tabs -->
+            <div class="arcade-tabs">
+              <button type="button" id="tabBtnQuiz" class="arcade-tab-btn active">
+                <span class="material-symbols-outlined tab-btn-icon">quiz</span>
+                <span>Hero Quiz</span>
+              </button>
+              <button type="button" id="tabBtnSpin" class="arcade-tab-btn">
+                <span class="material-symbols-outlined tab-btn-icon">donut_large</span>
+                <span>Lucky Spin</span>
+              </button>
+              <button type="button" id="tabBtnRush" class="arcade-tab-btn">
+                <span class="material-symbols-outlined tab-btn-icon">touch_app</span>
+                <span>Diamond Rush</span>
+              </button>
+              <button type="button" id="tabBtnScratch" class="arcade-tab-btn">
+                <span class="material-symbols-outlined tab-btn-icon">crop_portrait</span>
+                <span>Scratch Card</span>
+              </button>
+            </div>
+
+            <!-- GAME 1: MLBB HERO TRIVIA QUIZ -->
+            <div id="gameViewQuiz" class="game-view active">
+              <div class="game-card">
+                <div class="game-header-bar">
+                  <span class="game-pill-badge">MLBB Hero Trivia</span>
+                  <span class="game-score-badge" id="quizProgressText">Question 1/5</span>
+                </div>
+
+                <div class="quiz-question-box">
+                  <p id="quizQuestionText" class="quiz-question">Loading question...</p>
+                </div>
+
+                <div class="quiz-options-list" id="quizOptionsContainer">
+                  <!-- Injected dynamically -->
+                </div>
+
+                <div id="quizFeedbackBox" class="quiz-feedback-box hidden">
+                  <p id="quizFeedbackText" class="quiz-feedback-msg"></p>
+                </div>
+
+                <div class="game-footer-actions">
+                  <button type="button" id="btnNextQuizQuestion" class="btn btn-primary btn-sm hidden">
+                    <span>Next Question</span>
+                    <span class="material-symbols-outlined btn-icon-right">navigate_next</span>
+                  </button>
+                  <button type="button" id="btnRestartQuiz" class="btn btn-secondary btn-sm hidden">
+                    <span class="material-symbols-outlined btn-icon">replay</span>
+                    <span>Play Another Round</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- GAME 2: LUCKY SPIN WHEEL -->
+            <div id="gameViewSpin" class="game-view">
+              <div class="game-card text-center">
+                <div class="game-header-bar">
+                  <span class="game-pill-badge">Lucky Wheel</span>
+                  <span class="game-score-badge" id="spinStatusBadge">1 Free Spin Ready</span>
+                </div>
+
+                <div class="wheel-stage">
+                  <div class="wheel-pointer">
+                    <span class="material-symbols-outlined icon-pointer">arrow_drop_down</span>
+                  </div>
+                  <canvas id="wheelCanvas" width="280" height="280" class="wheel-canvas"></canvas>
+                </div>
+
+                <div class="wheel-action-bar">
+                  <button type="button" id="btnSpinWheel" class="btn btn-primary">
+                    <span class="material-symbols-outlined btn-icon">rotate_right</span>
+                    <span id="btnSpinWheelText">Spin Wheel (Free)</span>
+                  </button>
+                </div>
+                <p id="spinNoticeText" class="game-sub-note">Free spin resets every 4 hours or spin for 10 pts</p>
+              </div>
+            </div>
+
+            <!-- GAME 3: DIAMOND RUSH (REFLEX ARCADE) -->
+            <div id="gameViewRush" class="game-view">
+              <div class="game-card">
+                <div class="game-header-bar">
+                  <span class="game-pill-badge">Diamond Rush</span>
+                  <div class="rush-stats">
+                    <span>Score: <strong id="rushScore">0</strong></span>
+                    <span>Time: <strong id="rushTimer">20s</strong></span>
+                  </div>
+                </div>
+
+                <div id="rushPlayground" class="rush-playground">
+                  <div id="rushStartOverlay" class="rush-overlay">
+                    <span class="material-symbols-outlined icon-rush-diamond">diamond</span>
+                    <h4>Tap Falling Diamonds!</h4>
+                    <p>Collect diamonds (+10) and stars (+25). Avoid bombs (-15)! You have 20 seconds.</p>
+                    <button type="button" id="btnStartRush" class="btn btn-primary btn-sm">
+                      <span class="material-symbols-outlined btn-icon">play_arrow</span>
+                      <span>Start Rush Game</span>
+                    </button>
+                  </div>
+                </div>
+
+                <p class="game-sub-note">Test your speed & reflexes to earn instant points!</p>
+              </div>
+            </div>
+
+            <!-- GAME 4: SCRATCH CARD -->
+            <div id="gameViewScratch" class="game-view">
+              <div class="game-card text-center">
+                <div class="game-header-bar">
+                  <span class="game-pill-badge">Scratch & Win</span>
+                  <span class="game-score-badge">Instant Prize</span>
+                </div>
+
+                <p class="scratch-instruction">Scratch the silver card below with your finger!</p>
+                
+                <div class="scratch-card-container">
+                  <!-- Underneath prize layer -->
+                  <div id="scratchPrizeLayer" class="scratch-prize-layer">
+                    <div class="scratch-prize-content">
+                      <span class="material-symbols-outlined icon-prize-star">stars</span>
+                      <div id="scratchPrizeValue" class="scratch-prize-num">+50 PTS</div>
+                      <div class="scratch-prize-label">Congratulations!</div>
+                    </div>
+                  </div>
+                  <!-- Canvas scratch foil layer -->
+                  <canvas id="scratchCanvas" width="280" height="150" class="scratch-canvas"></canvas>
+                </div>
+
+                <div class="scratch-action-bar">
+                  <button type="button" id="btnNewScratchCard" class="btn btn-secondary btn-sm">
+                    <span class="material-symbols-outlined btn-icon">refresh</span>
+                    <span>New Card (15 Pts)</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- ================= PAGE 3: DIAMOND GIVEAWAY ================= -->
+        <section id="pageGiveaway" class="page">
+          <div class="page-inner-container">
+            
+            <div class="page-intro-header">
+              <h2 class="page-heading">Diamond Giveaways</h2>
+              <p class="page-subheading">Enter official giveaways with points. Winners receive direct MLBB in-game deliveries!</p>
+            </div>
+
+            <!-- User Tickets Summary -->
+            <div class="tickets-summary-card">
+              <div class="tickets-summary-left">
+                <span class="material-symbols-outlined icon-ticket-large">confirmation_number</span>
+                <div>
+                  <div class="tickets-summary-num" id="giveawayTotalTickets">0</div>
+                  <div class="tickets-summary-lbl">Your Active Tickets</div>
+                </div>
+              </div>
+              <div class="tickets-summary-right">
+                <button type="button" id="btnHowGiveawayWorks" class="btn-link">How it works</button>
+              </div>
+            </div>
+
+            <!-- EVENT 1: MEGA WEEKLY GIVEAWAY (2,500 DIAMONDS) -->
+            <div class="giveaway-event-card">
+              <div class="event-card-header">
+                <span class="event-badge mega">Weekly Mega Raffle</span>
+                <span class="event-pool-tag">Pool: 2,500 💎</span>
+              </div>
+
+              <div class="event-body">
+                <h3 class="event-title">2,500 MLBB Diamonds Pool</h3>
+                <p class="event-desc">5 winners will receive 500 Diamonds each directly delivered to their verified MLBB account!</p>
+
+                <div class="event-countdown-box">
+                  <span class="material-symbols-outlined icon-timer">schedule</span>
+                  <span>Draws in: <strong id="megaCountdownText">3d 14h 28m</strong></span>
+                </div>
+
+                <div class="event-entry-controls">
+                  <div class="event-price-info">
+                    <span class="ticket-cost">50 Points / Ticket</span>
+                    <span class="ticket-balance">You hold: <strong id="megaMyTicketsCount">0</strong></span>
+                  </div>
+                  <div class="event-buttons-row">
+                    <button type="button" id="btnBuyMega1" class="btn btn-secondary btn-sm flex-1">
+                      <span>+1 Ticket (50 pts)</span>
+                    </button>
+                    <button type="button" id="btnBuyMega5" class="btn btn-primary btn-sm flex-1">
+                      <span>+5 Tickets (250 pts)</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- EVENT 2: DAILY BLITZ GIVEAWAY (250 DIAMONDS) -->
+            <div class="giveaway-event-card">
+              <div class="event-card-header">
+                <span class="event-badge daily">Daily Blitz Raffle</span>
+                <span class="event-pool-tag">Pool: 250 💎</span>
+              </div>
+
+              <div class="event-body">
+                <h3 class="event-title">250 MLBB Diamonds Blitz</h3>
+                <p class="event-desc">Drawn every 24 hours at midnight! 1 lucky player takes home 250 Diamonds.</p>
+
+                <div class="event-countdown-box">
+                  <span class="material-symbols-outlined icon-timer">schedule</span>
+                  <span>Draws in: <strong id="dailyCountdownText">07h 42m</strong></span>
+                </div>
+
+                <div class="event-entry-controls">
+                  <div class="event-price-info">
+                    <span class="ticket-cost">20 Points / Ticket</span>
+                    <span class="ticket-balance">You hold: <strong id="dailyMyTicketsCount">0</strong></span>
+                  </div>
+                  <button type="button" id="btnBuyDaily1" class="btn btn-primary btn-sm w-full">
+                    <span>Enter Blitz (20 pts)</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Rules & Transparency Card -->
+            <div class="info-card">
+              <h3 class="info-card-title">Giveaway Transparency & Rules</h3>
+              <div class="rules-list">
+                <div class="rule-item">
+                  <span class="material-symbols-outlined icon-rule">check_circle</span>
+                  <span>Winners drawn automatically via cryptographically fair random number generator.</span>
+                </div>
+                <div class="rule-item">
+                  <span class="material-symbols-outlined icon-rule">check_circle</span>
+                  <span>Diamonds are sent automatically to your verified MLBB User ID and Server.</span>
+                </div>
+                <div class="rule-item">
+                  <span class="material-symbols-outlined icon-rule">check_circle</span>
+                  <span>No purchase necessary; all points can be earned 100% free via arcade games & daily check-in.</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- ================= PAGE 4: REDEEM STORE ================= -->
+        <section id="pageStore" class="page">
+          <div class="page-inner-container">
+            
+            <div class="page-intro-header">
+              <h2 class="page-heading">Redeem Diamonds</h2>
+              <p class="page-subheading">Exchange your earned points for direct MLBB Diamonds top-up!</p>
+            </div>
+
+            <!-- Target Verified Account Strip -->
+            <div class="delivery-target-card">
+              <div class="target-card-top">
+                <span class="target-tag">Delivery Destination</span>
+                <span class="target-verified-badge">
+                  <span class="material-symbols-outlined icon-tiny">check_circle</span>
+                  <span>Verified</span>
+                </span>
+              </div>
+              <div class="target-card-info">
+                <img id="storeFlagImg" src="" alt="Flag" class="flag-icon-small hidden">
+                <span id="storeAccountIgn" class="target-ign font-bold">—</span>
+                <span id="storeAccountId" class="target-id font-mono">(ID: —)</span>
+              </div>
+            </div>
+
+            <!-- Store Packages Grid -->
+            <div class="store-grid" id="storePackagesContainer">
+              <!-- Rendered dynamically -->
+            </div>
+
+            <!-- Order / Redemption History -->
+            <div class="history-section">
+              <div class="section-header">
+                <h3 class="section-title">Redemption History</h3>
+                <span class="section-desc">Your claimed orders</span>
+              </div>
+
+              <div id="redemptionHistoryList" class="history-list">
+                <!-- Empty state or list items -->
+                <div class="empty-history" id="emptyHistoryMsg">
+                  <span class="material-symbols-outlined icon-empty">receipt_long</span>
+                  <p>No redemptions yet. Play games to earn points and claim your first diamond pack!</p>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- ================= PAGE 5: PROFILE ================= -->
+        <section id="pageProfile" class="page">
+          <div class="profile-container">
+            <!-- Profile Header Card -->
+            <div class="profile-header-card">
+              <div class="profile-avatar-wrap" id="btnEditProfileAvatar" role="button" tabindex="0" title="Tap to change profile picture">
+                <img id="profileCardAvatar" src="" alt="Profile Photo" class="profile-card-img">
+                <div class="profile-avatar-badge">
+                  <span class="material-symbols-outlined icon-badge-pfp">photo_camera</span>
+                </div>
+              </div>
+              <div class="profile-card-details">
+                <div class="flex-center-gap">
+                  <h2 id="profileCardName" class="profile-name">—</h2>
+                  <span class="badge-locked-ign" title="Username is locked to your verified MLBB In-Game Name">
+                    <span class="material-symbols-outlined icon-tiny">verified</span>
+                  </span>
+                </div>
+                <p id="profileCardEmail" class="profile-email">—</p>
+                <div class="profile-btn-row">
+                  <button type="button" id="btnChangeAvatarText" class="btn-change-photo-text">
+                    <span class="material-symbols-outlined btn-icon-tiny">photo_camera</span>
+                    <span>Change Photo</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Quick Stats Strip -->
+            <div class="profile-stats-strip">
+              <div class="pstat-item">
+                <div class="pstat-num" id="pstatPoints">100</div>
+                <div class="pstat-lbl">Points</div>
+              </div>
+              <div class="pstat-item">
+                <div class="pstat-num" id="pstatDiamonds">0</div>
+                <div class="pstat-lbl">Diamonds</div>
+              </div>
+              <div class="pstat-item">
+                <div class="pstat-num" id="pstatTickets">0</div>
+                <div class="pstat-lbl">Tickets</div>
+              </div>
+              <div class="pstat-item">
+                <div class="pstat-num" id="pstatStreak">1</div>
+                <div class="pstat-lbl">Streak</div>
+              </div>
+            </div>
+
+            <!-- MLBB Verified Card -->
+            <div class="info-card">
+              <div class="flex-between mb-2">
+                <h3 class="info-card-title">MLBB Account Details</h3>
+                <button type="button" id="btnProfileRefreshIgn" class="btn-refresh-ign" title="Sync IGN from MLBB servers">
+                  <span class="material-symbols-outlined btn-icon-tiny">sync</span>
+                  <span>Sync IGN</span>
+                </button>
+              </div>
+              <div class="info-item">
+                <span class="info-key">In-Game Name (IGN)</span>
+                <span id="infoIgn" class="info-val font-bold">—</span>
+              </div>
+              <div class="info-item">
+                <span class="info-key">Account ID & Zone</span>
+                <span id="infoMlbb" class="info-val font-mono">—</span>
+              </div>
+              <div class="info-item">
+                <span class="info-key">Region</span>
+                <div class="info-val flex-center-gap">
+                  <img id="infoFlagImg" src="" alt="Flag" class="flag-icon-small hidden">
+                  <span id="infoRegionName">—</span>
+                </div>
+              </div>
+              <button type="button" id="btnViewAccountBinds" class="btn btn-secondary w-full mt-2">
+                <span class="material-symbols-outlined btn-icon-tiny">link</span>
+                <span>View Account Bind Status</span>
+              </button>
+            </div>
+
+            <!-- Session Location Log -->
+            <div class="info-card">
+              <h3 class="info-card-title">Session Log</h3>
+              <div class="info-item">
+                <span class="info-key">Login Time</span>
+                <span id="infoLoginTime" class="info-val">—</span>
+              </div>
+              <div class="info-item">
+                <span class="info-key">Recorded Location</span>
+                <span id="infoLocation" class="info-val font-mono">—</span>
+              </div>
+            </div>
+
+            <!-- Log Out Button -->
+            <button id="btnLogout" class="btn btn-outline">
+              <span class="material-symbols-outlined btn-icon">logout</span>
+              <span>Sign Out</span>
+            </button>
+          </div>
+        </section>
+
+      </main>
+
+      <!-- Bottom Navigation (5 Tabs) -->
+      <nav class="bottom-nav">
+        <button id="navHome" class="nav-item active" type="button">
+          <span class="material-symbols-outlined nav-icon">home</span>
+          <span class="nav-label">Home</span>
+        </button>
+
+        <button id="navGames" class="nav-item" type="button">
+          <span class="material-symbols-outlined nav-icon">sports_esports</span>
+          <span class="nav-label">Arcade</span>
+        </button>
+
+        <button id="navGiveaway" class="nav-item" type="button">
+          <span class="material-symbols-outlined nav-icon">card_giftcard</span>
+          <span class="nav-label">Giveaway</span>
+        </button>
+
+        <button id="navStore" class="nav-item" type="button">
+          <span class="material-symbols-outlined nav-icon">diamond</span>
+          <span class="nav-label">Store</span>
+        </button>
+
+        <button id="navProfile" class="nav-item" type="button">
+          <span class="material-symbols-outlined nav-icon">person</span>
+          <span class="nav-label">Profile</span>
+        </button>
+      </nav>
+    </div>
+
+    <!-- ================= MODALS ================= -->
+
+    <!-- Modal 1: Daily Check-In -->
+    <div id="modalCheckIn" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="flex-center-gap">
+            <span class="material-symbols-outlined icon-modal-header text-amber">calendar_month</span>
+            <h3 class="modal-title">7-Day Check-in Streak</h3>
+          </div>
+          <button type="button" class="btn-modal-close" data-close="modalCheckIn">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        <p class="modal-desc">Check in every consecutive day to earn multiplying point bonuses!</p>
+
+        <div class="streak-calendar-grid" id="streakGrid">
+          <!-- Injected dynamically -->
+        </div>
+
+        <button type="button" id="btnClaimDailyCheckInModal" class="btn btn-primary w-full">
+          <span>Claim Today's Bonus</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Modal 2: Daily Quests -->
+    <div id="modalQuests" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="flex-center-gap">
+            <span class="material-symbols-outlined icon-modal-header text-blue">task_alt</span>
+            <h3 class="modal-title">Daily Quests</h3>
+          </div>
+          <button type="button" class="btn-modal-close" data-close="modalQuests">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        <p class="modal-desc">Complete daily missions to claim extra points:</p>
+
+        <div class="quests-list" id="questsListContainer">
+          <!-- Injected dynamically -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal 3: Confirm Redemption -->
+    <div id="modalRedeemConfirm" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="flex-center-gap">
+            <span class="material-symbols-outlined icon-modal-header text-emerald">diamond</span>
+            <h3 class="modal-title">Confirm Redemption</h3>
+          </div>
+          <button type="button" class="btn-modal-close" data-close="modalRedeemConfirm">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        <div class="confirm-pack-box">
+          <div id="confirmPackDiamonds" class="confirm-diamonds">250 MLBB Diamonds</div>
+          <div id="confirmPackPoints" class="confirm-points">Cost: 2,200 Points</div>
+        </div>
+
+        <div class="confirm-recipient-box">
+          <div class="confirm-recipient-lbl">Delivery Destination:</div>
+          <div class="confirm-recipient-val">
+            <img id="confirmFlagImg" src="" alt="Flag" class="flag-icon-small hidden">
+            <span id="confirmRecipientText" class="font-bold">—</span>
+          </div>
+        </div>
+
+        <div id="redeemErrorMsg" class="status-msg error hidden"></div>
+
+        <div class="delivery-estimate-badge">
+          <span class="material-symbols-outlined icon-tiny">schedule</span>
+          <span>Delivery within 7–14 working days directly in-game</span>
+        </div>
+
+        <div class="modal-actions-row">
+          <button type="button" class="btn btn-outline flex-1" data-close="modalRedeemConfirm">Cancel</button>
+          <button type="button" id="btnExecuteRedeem" class="btn btn-primary flex-1">
+            <span>Confirm & Redeem</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal 4: Generic Celebration / Reward Alert -->
+    <div id="modalRewardAlert" class="modal-overlay hidden">
+      <div class="modal-card text-center">
+        <div class="celebration-icon-wrap">
+          <span class="material-symbols-outlined icon-celebration">celebration</span>
+        </div>
+        <h3 id="rewardModalTitle" class="modal-title">Awesome!</h3>
+        <p id="rewardModalMsg" class="modal-desc">You've won 50 points!</p>
+        <button type="button" class="btn btn-primary w-full" data-close="modalRewardAlert">Great!</button>
+      </div>
+    </div>
+
+    <!-- Modal 5: Custom Confirmation Dialog (e.g. Sign Out, Destructive actions) -->
+    <div id="modalConfirmDialog" class="modal-overlay hidden">
+      <div class="modal-card text-center">
+        <div class="dialog-icon-wrap icon-theme-danger" id="confirmDialogIconWrap">
+          <span class="material-symbols-outlined icon-dialog" id="confirmDialogIcon">logout</span>
+        </div>
+        <h3 id="confirmDialogTitle" class="modal-title">Sign Out</h3>
+        <p id="confirmDialogMsg" class="modal-desc">Are you sure you want to sign out of Ketupat?</p>
+        <div class="modal-actions-row">
+          <button type="button" id="btnCancelConfirmDialog" class="btn btn-outline flex-1" data-close="modalConfirmDialog">Cancel</button>
+          <button type="button" id="btnActionConfirmDialog" class="btn btn-danger flex-1">Sign Out</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal 6: Custom Notice / Alert Dialog (Replaces native browser alert) -->
+    <div id="modalNoticeDialog" class="modal-overlay hidden">
+      <div class="modal-card text-center">
+        <div class="dialog-icon-wrap icon-theme-blue" id="noticeDialogIconWrap">
+          <span class="material-symbols-outlined icon-dialog" id="noticeDialogIcon">info</span>
+        </div>
+        <h3 id="noticeDialogTitle" class="modal-title">Notice</h3>
+        <p id="noticeDialogMsg" class="modal-desc">Message content goes here.</p>
+        <button type="button" id="btnNoticeDialogOk" class="btn btn-primary w-full" data-close="modalNoticeDialog">Understood</button>
+      </div>
+    </div>
+
+    <!-- Modal 7: Verify / Input Platform Credentials -->
+    <div id="modalPlatformBind" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="material-symbols-outlined icon-modal-header text-emerald" id="modalBindIcon">link</span>
+            <h3 class="modal-title" id="modalBindTitle">Verify Platform Binding</h3>
+          </div>
+          <button type="button" class="btn-modal-close" data-close="modalPlatformBind">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        <p class="modal-desc" id="modalBindDesc">Please enter your platform account credentials to verify and confirm binding.</p>
+        <form id="formModalPlatformBind" class="auth-form mt-3">
+          <input type="hidden" id="modalBindPlatformKey" value="" />
+          <div class="form-group">
+            <label class="form-label" id="labelModalBindEmail">Platform Email / Login</label>
+            <input type="text" id="inputModalBindEmail" class="form-input" placeholder="e.g. account@gmail.com" required autocomplete="off" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" id="labelModalBindUsername">Platform Username / Tag</label>
+            <input type="text" id="inputModalBindUsername" class="form-input" placeholder="e.g. player_tag or username" required autocomplete="off" />
+          </div>
+          <div class="modal-actions-row mt-4">
+            <button type="button" class="btn btn-outline flex-1" data-close="modalPlatformBind">Cancel</button>
+            <button type="submit" class="btn btn-primary flex-1" id="btnSubmitPlatformBind">Verify & Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="appToast" class="app-toast hidden">
+      <span class="material-symbols-outlined icon-toast">info</span>
+      <span id="appToastText">Notification</span>
+    </div>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
