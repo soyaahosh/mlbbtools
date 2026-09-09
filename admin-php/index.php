@@ -688,9 +688,9 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
                 </div>
 
                 <div class="form-group">
-                  <label class="form-label">Admin Security PIN</label>
+                  <label class="form-label">Master Admin Passkey / PIN</label>
                   <input type="password" id="inputAdminPin" class="form-input font-mono" placeholder="Default: 123456">
-                  <p class="form-hint">Used to protect dangerous bulk operations</p>
+                  <p class="form-hint">Your secret gatekeeper passkey to unlock this Admin Command Center (Default: <code>123456</code>)</p>
                 </div>
 
                 <div class="settings-actions">
