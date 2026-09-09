@@ -1640,15 +1640,126 @@ async function loadConfig() {
   }
 }
 
+// --- FIDO2 / WEBAUTHN PASSKEYS HELPERS ---
+function bufferToBase64url(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+function base64urlToBuffer(base64url) {
+  let base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
+  while (base64.length % 4) {
+    base64 += "=";
+  }
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+/**
+ * Prompts the administrator for physical passkey biometric/hardware confirmation
+ * before sensitive administrative actions (e.g. saving Cloud / API settings) can execute.
+ */
+async function promptPasskeyVerification(actionTitle = "confirm this action") {
+  if (!window.PublicKeyCredential) {
+    throw new Error("Your browser or device does not support WebAuthn Passkeys.");
+  }
+
+  // Step 1: Request cryptographic challenge & registered passkeys from server
+  const optRes = await fetch("api.php?action=passkey_login_options");
+  const optData = await optRes.json();
+  if (!optData.success || !optData.data) {
+    throw new Error(optData.message || "Failed retrieving passkey challenge.");
+  }
+
+  const opts = optData.data;
+  if (opts.has_passkeys === false) {
+    // No passkeys registered in the system yet, pass through
+    return null;
+  }
+
+  // Convert base64url challenge and allowCredentials to Buffers
+  const getOptions = {
+    challenge: base64urlToBuffer(opts.challenge),
+    rpId: opts.rpId || window.location.hostname,
+    userVerification: opts.userVerification || "preferred",
+    timeout: opts.timeout || 60000
+  };
+
+  if (opts.allowCredentials && opts.allowCredentials.length > 0) {
+    getOptions.allowCredentials = opts.allowCredentials.map(c => ({
+      type: "public-key",
+      id: base64urlToBuffer(c.id)
+    }));
+  }
+
+  // Step 2: Trigger native device / Google Password Manager prompt
+  const assertion = await navigator.credentials.get({
+    publicKey: getOptions
+  });
+
+  if (!assertion) {
+    throw new Error("Passkey verification was not completed.");
+  }
+
+  // Step 3: Return formatted assertion payload
+  return {
+    id: assertion.id,
+    rawId: bufferToBase64url(assertion.rawId),
+    clientDataJSON: bufferToBase64url(assertion.response.clientDataJSON),
+    authenticatorData: bufferToBase64url(assertion.response.authenticatorData),
+    signature: bufferToBase64url(assertion.response.signature),
+    userHandle: assertion.response.userHandle ? bufferToBase64url(assertion.response.userHandle) : null
+  };
+}
+
 async function handleSaveCloudSettings(e) {
   e.preventDefault();
   const btn = document.getElementById("btnSaveCloudSettings");
-  btn.disabled = true;
+  const origHtml = btn ? btn.innerHTML : "";
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="material-symbols-outlined btn-icon spin">sync</span><span>Verifying Passkey...</span>';
+  }
+
+  let passkeyAssertion = null;
+  try {
+    showToast("Please verify your passkey on device...", "fingerprint");
+    passkeyAssertion = await promptPasskeyVerification("save Cloud settings");
+  } catch (err) {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+    }
+    console.warn("Passkey verification canceled or failed:", err);
+    if (err.name === "NotAllowedError") {
+      showToast("Passkey verification was canceled. Settings not modified.", "error");
+    } else {
+      showToast(err.message || "Passkey verification failed", "error");
+    }
+    return;
+  }
+
+  if (btn) {
+    btn.innerHTML = '<span class="material-symbols-outlined btn-icon">save</span><span>Saving Changes...</span>';
+  }
 
   const payload = {
     supabase_url: document.getElementById("inputSupabaseUrl").value.trim(),
     supabase_secret_key: document.getElementById("inputSupabaseSecretKey").value.trim(),
-    supabase_anon_key: document.getElementById("inputSupabaseAnonKey").value.trim()
+    supabase_anon_key: document.getElementById("inputSupabaseAnonKey").value.trim(),
+    passkey_assertion: passkeyAssertion
   };
 
   try {
@@ -1659,7 +1770,7 @@ async function handleSaveCloudSettings(e) {
     });
     const json = await res.json();
     if (json.success) {
-      showToast("Supabase configuration saved successfully!", "check_circle");
+      showToast("Passkey verified! Supabase configuration saved.", "check_circle");
       loadConfig();
       fetchStats();
     } else {
@@ -1668,7 +1779,10 @@ async function handleSaveCloudSettings(e) {
   } catch (err) {
     showToast("Network error saving configuration", "error");
   } finally {
-    btn.disabled = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+    }
   }
 }
 
@@ -1703,10 +1817,38 @@ async function handleTestConnection() {
 async function handleSaveDlyyzSettings(e) {
   e.preventDefault();
   const btn = document.getElementById("btnSaveDlyyzSettings");
-  btn.disabled = true;
+  const origHtml = btn ? btn.innerHTML : "";
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="material-symbols-outlined btn-icon spin">sync</span><span>Verifying Passkey...</span>';
+  }
+
+  let passkeyAssertion = null;
+  try {
+    showToast("Please verify your passkey on device...", "fingerprint");
+    passkeyAssertion = await promptPasskeyVerification("save API configuration");
+  } catch (err) {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+    }
+    console.warn("Passkey verification canceled or failed:", err);
+    if (err.name === "NotAllowedError") {
+      showToast("Passkey verification was canceled. Settings not modified.", "error");
+    } else {
+      showToast(err.message || "Passkey verification failed", "error");
+    }
+    return;
+  }
+
+  if (btn) {
+    btn.innerHTML = '<span class="material-symbols-outlined btn-icon">save</span><span>Saving API...</span>';
+  }
 
   const payload = {
-    dlyyz_api_key: document.getElementById("inputDlyyzApiKey").value.trim()
+    dlyyz_api_key: document.getElementById("inputDlyyzApiKey").value.trim(),
+    passkey_assertion: passkeyAssertion
   };
 
   try {
@@ -1717,41 +1859,18 @@ async function handleSaveDlyyzSettings(e) {
     });
     const json = await res.json();
     if (json.success) {
-      showToast("API & PIN settings saved!", "check_circle");
+      showToast("Passkey verified! API configuration saved.", "check_circle");
     } else {
       showToast(json.message || "Failed to save API configuration", "error");
     }
   } catch (err) {
     showToast("Network error saving settings", "error");
   } finally {
-    btn.disabled = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+    }
   }
-}
-
-// --- FIDO2 / WEBAUTHN PASSKEYS MANAGEMENT ---
-function bufferToBase64url(buffer) {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-function base64urlToBuffer(base64url) {
-  let base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
-  while (base64.length % 4) {
-    base64 += "=";
-  }
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
 }
 
 async function loadRegisteredPasskeys() {
@@ -1814,7 +1933,20 @@ async function handleDeletePasskey(idEsc, nameEsc) {
   const id = decodeURIComponent(idEsc);
   const name = decodeURIComponent(nameEsc);
 
-  if (!confirm(`Are you sure you want to remove passkey "${name}"?\nYou will no longer be able to log in with this passkey.`)) {
+  if (!confirm(`Are you sure you want to remove passkey "${name}"?\nPasskey verification is required to confirm removal.`)) {
+    return;
+  }
+
+  let passkeyAssertion = null;
+  try {
+    showToast("Please verify with your passkey to confirm removal...", "fingerprint");
+    passkeyAssertion = await promptPasskeyVerification("delete this passkey");
+  } catch (err) {
+    if (err.name === "NotAllowedError") {
+      showToast("Passkey verification canceled. Passkey not deleted.", "error");
+    } else {
+      showToast(err.message || "Passkey verification failed", "error");
+    }
     return;
   }
 
@@ -1822,7 +1954,7 @@ async function handleDeletePasskey(idEsc, nameEsc) {
     const res = await fetch("api.php?action=delete_passkey", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id })
+      body: JSON.stringify({ id, passkey_assertion: passkeyAssertion })
     });
     const json = await res.json();
     if (json.success) {

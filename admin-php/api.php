@@ -754,6 +754,40 @@ if (!in_array($action, $publicActions, true)) {
     }
 }
 
+/**
+ * Verify FIDO2 Passkey assertion for high-privilege configuration modifications
+ */
+function verifyPasskeyForAction($body, $actionName = 'perform this action') {
+    $passkeys = WebAuthnEngine::getPasskeys();
+    if (empty($passkeys)) {
+        // If no passkeys have been registered yet, allow configuration
+        return true;
+    }
+
+    $assertion = $body['passkey_assertion'] ?? null;
+    if (empty($assertion) || empty($assertion['id']) || empty($assertion['signature'])) {
+        sendJson(false, null, "Passkey verification is required to {$actionName}. Please verify with your hardware passkey.", 403);
+    }
+
+    $expectedChallenge = $_SESSION['webauthn_auth_challenge'] ?? '';
+    if (empty($expectedChallenge)) {
+        sendJson(false, null, 'Passkey verification challenge has expired. Please retry verification.', 400);
+    }
+
+    try {
+        $credId = $assertion['id'] ?? '';
+        $clientData = $assertion['clientDataJSON'] ?? '';
+        $authData = $assertion['authenticatorData'] ?? '';
+        $sig = $assertion['signature'] ?? '';
+
+        WebAuthnEngine::verifyAuthentication($credId, $clientData, $authData, $sig, $expectedChallenge);
+        unset($_SESSION['webauthn_auth_challenge']);
+        return true;
+    } catch (Throwable $e) {
+        sendJson(false, null, 'Passkey verification failed: ' . $e->getMessage(), 403);
+    }
+}
+
 try {
     switch ($action) {
 
@@ -839,6 +873,7 @@ try {
                 'challenge' => $challenge,
                 'rpId' => $rpId,
                 'allowCredentials' => $allowCredentials,
+                'has_passkeys' => !empty($passkeys),
                 'userVerification' => 'preferred',
                 'timeout' => 60000
             ]);
@@ -881,6 +916,7 @@ try {
             break;
 
         case 'delete_passkey':
+            verifyPasskeyForAction($body, 'delete a registered passkey');
             $credId = $body['id'] ?? $_GET['id'] ?? '';
             if (empty($credId)) {
                 sendJson(false, null, 'Passkey ID is required', 400);
@@ -1313,11 +1349,13 @@ try {
                 'supabase_secret_key'  => $cfg['supabase_secret_key'], // Provided for direct editing in admin
                 'supabase_secret_mask' => $maskedSecret,
                 'dlyyz_api_key'        => $cfg['dlyyz_api_key'],
-                'has_highest_access'   => !empty($cfg['supabase_secret_key'])
+                'has_highest_access'   => !empty($cfg['supabase_secret_key']),
+                'has_passkeys'         => !empty(WebAuthnEngine::getPasskeys())
             ], 'Configuration retrieved');
             break;
 
         case 'save_config':
+            verifyPasskeyForAction($body, 'edit Cloud & API settings');
             $updateData = [];
 
             if (isset($body['supabase_url'])) {

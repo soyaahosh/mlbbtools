@@ -630,6 +630,25 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
 
         <!-- ================= VIEW 6: CLOUD & API SETTINGS ================= -->
         <section id="viewSettings" class="view-section">
+
+          <!-- Passkey Security Enforcement Banner -->
+          <div class="settings-passkey-banner" style="background: linear-gradient(135deg, rgba(39, 221, 255, 0.1), rgba(140, 116, 255, 0.12)); border: 1px solid rgba(39, 221, 255, 0.35); border-radius: 14px; padding: 16px 20px; margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; box-shadow: 0 8px 24px rgba(0,0,0,0.15);">
+            <div style="display: flex; align-items: center; gap: 14px;">
+              <div style="width: 44px; height: 44px; border-radius: 12px; background: rgba(39, 221, 255, 0.18); color: var(--primary); display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 0 16px rgba(39, 221, 255, 0.25);">
+                <span class="material-symbols-outlined" style="font-size: 24px;">verified_user</span>
+              </div>
+              <div>
+                <div style="font-size: 0.96rem; font-weight: 800; color: #ffffff; letter-spacing: 0.02em;">Passkey Verification Required</div>
+                <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;">Any action to edit or update Cloud & API settings requires physical biometric or security key verification via your registered passkey.</div>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="badge-highest-access" style="font-size: 0.74rem; padding: 6px 12px; display: inline-flex; align-items: center; gap: 6px;">
+                <span class="material-symbols-outlined" style="font-size: 15px;">fingerprint</span>
+                <span>Passkey Protected</span>
+              </span>
+            </div>
+          </div>
           
           <div class="settings-grid">
             
@@ -671,8 +690,8 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
 
                 <div class="settings-actions">
                   <button type="submit" class="btn btn-primary" id="btnSaveCloudSettings">
-                    <span class="material-symbols-outlined btn-icon">save</span>
-                    <span>Save Cloud Settings</span>
+                    <span class="material-symbols-outlined btn-icon">key</span>
+                    <span>Verify Passkey & Save Settings</span>
                   </button>
 
                   <button type="button" class="btn btn-secondary" id="btnTestSupabaseConnection">
@@ -706,8 +725,8 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
 
                 <div class="settings-actions">
                   <button type="submit" class="btn btn-primary" id="btnSaveDlyyzSettings">
-                    <span class="material-symbols-outlined btn-icon">save</span>
-                    <span>Update API Configuration</span>
+                    <span class="material-symbols-outlined btn-icon">key</span>
+                    <span>Verify Passkey & Update API</span>
                   </button>
                 </div>
               </form>
