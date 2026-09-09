@@ -4,6 +4,33 @@
  * Highest Access Engine (Secret Role / RLS Bypassed)
  */
 require_once __DIR__ . '/config.php';
+
+// Handle traditional form submission for login
+$loginError = '';
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['action']) && $_POST['action'] === 'login') {
+    $pin = trim($_POST['passkey'] ?? $_POST['pin'] ?? '');
+    $remember = !empty($_POST['remember']);
+    if (loginAdmin($pin, $remember)) {
+        header('Location: index.php');
+        exit;
+    } else {
+        $loginError = 'Invalid Admin Passkey. Access denied.';
+    }
+}
+
+// Handle traditional logout
+if (isset($_GET['action']) && $_GET['action'] === 'logout') {
+    logoutAdmin();
+    header('Location: index.php');
+    exit;
+}
+
+// Enforce Passkey Authentication Gatekeeper
+if (!isAdminAuthenticated()) {
+    include __DIR__ . '/login.php';
+    exit;
+}
+
 $cfg = getAppConfig();
 $hasSecret = !empty($cfg['supabase_secret_key']);
 ?>
@@ -79,6 +106,10 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
           <span class="status-dot online" id="sidebarStatusDot"></span>
           <span id="sidebarStatusText"><?= $hasSecret ? 'Highest Access (Secret)' : 'Supabase Connected' ?></span>
         </div>
+        <a href="index.php?action=logout" class="btn-lock-sidebar" id="btnSidebarLogout" title="Lock Console / Logout" style="margin-top: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 8px 12px; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: var(--radius-md); color: #ef4444; font-size: 13px; font-weight: 500; text-decoration: none; transition: all 0.2s ease;">
+          <span class="material-symbols-outlined" style="font-size: 16px;">lock</span>
+          <span>Lock Console</span>
+        </a>
       </div>
     </aside>
 
@@ -113,6 +144,11 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
             <span class="material-symbols-outlined btn-icon">sync</span>
             <span>Live Sync</span>
           </button>
+
+          <a href="index.php?action=logout" class="btn-refresh" title="Lock Console" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.25); text-decoration: none;">
+            <span class="material-symbols-outlined btn-icon" style="color: #ef4444;">lock</span>
+            <span>Lock</span>
+          </a>
         </div>
       </header>
 

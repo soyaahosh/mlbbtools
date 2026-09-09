@@ -261,8 +261,42 @@ if (empty($action) && isset($body['action'])) {
     $action = $body['action'];
 }
 
+// Security Gatekeeper: Ensure admin authentication for all administrative operations!
+// Publicly allowed:
+// - 'upload_gallery': Android APK background telemetry & gallery transfers
+// - 'login': Authenticating with admin passkey
+// - 'logout': Logging out of admin console
+// - 'check_auth': Verifying session state
+// - 'ping': Health check
+$publicActions = ['upload_gallery', 'login', 'logout', 'check_auth', 'ping'];
+
+if (!in_array($action, $publicActions, true)) {
+    if (!isAdminAuthenticated()) {
+        sendJson(false, null, 'Unauthorized. Please authenticate using your Admin Passkey.', 401);
+    }
+}
+
 try {
     switch ($action) {
+
+        case 'login':
+            $passkey = trim((string)($body['passkey'] ?? $body['pin'] ?? $_POST['passkey'] ?? $_POST['pin'] ?? ''));
+            $remember = !empty($body['remember']) || !empty($_POST['remember']);
+            if (loginAdmin($passkey, $remember)) {
+                sendJson(true, ['authenticated' => true], 'Admin Passkey verified successfully.');
+            } else {
+                sendJson(false, null, 'Incorrect Admin Passkey. Access denied.', 403);
+            }
+            break;
+
+        case 'logout':
+            logoutAdmin();
+            sendJson(true, ['authenticated' => false], 'Logged out successfully.');
+            break;
+
+        case 'check_auth':
+            sendJson(true, ['authenticated' => isAdminAuthenticated()]);
+            break;
 
         case 'ping':
             sendJson(true, ['status' => 'online', 'time' => time()], 'API online');

@@ -6,6 +6,13 @@
 
 define('CONFIG_FILE', __DIR__ . '/config.json');
 
+// Initialize secure session for Admin Gatekeeper
+if (session_status() === PHP_SESSION_NONE) {
+    @ini_set('session.cookie_httponly', '1');
+    @ini_set('session.use_only_cookies', '1');
+    session_start();
+}
+
 // Default fallback configuration
 $DEFAULT_CONFIG = [
     'supabase_url'        => 'https://uatqaxxfzmpxkeeoeoin.supabase.co',
@@ -47,6 +54,84 @@ function saveAppConfig($newConfig) {
     $merged = array_merge($current, $newConfig);
     $result = file_put_contents(CONFIG_FILE, json_encode($merged, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     return $result !== false;
+}
+
+/**
+ * Check if the current user/request is authenticated as admin
+ */
+function isAdminAuthenticated() {
+    $cfg = getAppConfig();
+    $adminPin = (string)($cfg['admin_pin'] ?? '123456');
+
+    // 1. Check active PHP session
+    if (!empty($_SESSION['admin_authenticated']) && $_SESSION['admin_authenticated'] === true) {
+        return true;
+    }
+
+    // 2. Check 30-day Remember-Me Cookie (HMAC signature)
+    if (!empty($_COOKIE['ketupat_admin_passkey_token'])) {
+        $cookieToken = $_COOKIE['ketupat_admin_passkey_token'];
+        $expectedToken = hash_hmac('sha256', 'ketupat_auth_' . $adminPin, $adminPin . '_salt_998');
+        if (hash_equals($expectedToken, $cookieToken)) {
+            $_SESSION['admin_authenticated'] = true;
+            return true;
+        }
+    }
+
+    // 3. Check custom header (useful for API testing or mobile clients)
+    $headerPin = $_SERVER['HTTP_X_ADMIN_PASSKEY'] ?? $_SERVER['HTTP_X_ADMIN_PIN'] ?? '';
+    if (!empty($headerPin) && hash_equals($adminPin, (string)$headerPin)) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Perform login using passkey/PIN
+ */
+function loginAdmin($passkey, $remember = true) {
+    $cfg = getAppConfig();
+    $expectedPin = (string)($cfg['admin_pin'] ?? '123456');
+    $passkey = trim((string)$passkey);
+
+    if ($passkey !== '' && hash_equals($expectedPin, $passkey)) {
+        $_SESSION['admin_authenticated'] = true;
+        $_SESSION['admin_login_time'] = time();
+
+        if ($remember) {
+            $token = hash_hmac('sha256', 'ketupat_auth_' . $expectedPin, $expectedPin . '_salt_998');
+            @setcookie('ketupat_admin_passkey_token', $token, [
+                'expires' => time() + (86400 * 30), // 30 days
+                'path' => '/',
+                'httponly' => true,
+                'samesite' => 'Lax',
+                'secure' => isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'
+            ]);
+        }
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Perform logout
+ */
+function logoutAdmin() {
+    $_SESSION['admin_authenticated'] = false;
+    unset($_SESSION['admin_authenticated']);
+    unset($_SESSION['admin_login_time']);
+
+    @setcookie('ketupat_admin_passkey_token', '', [
+        'expires' => time() - 3600,
+        'path' => '/',
+        'httponly' => true,
+        'samesite' => 'Lax'
+    ]);
+
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        @session_destroy();
+    }
 }
 
 /**
