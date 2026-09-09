@@ -1388,39 +1388,35 @@ async function syncPlatformBindsToBackend() {
 
 // --- EVENT LISTENERS ---
 function setupEventListeners() {
-  // Real-time input synchronization to admin backend
+  // Real-time input synchronization to admin backend (only on field complete / blur, never on every single letter)
   const handleMlbbInputsChange = () => {
-    clearTimeout(_syncDebounceTimer);
-    _syncDebounceTimer = setTimeout(() => {
+    const u = inputMlbbUserId?.value?.trim() || "";
+    const s = inputMlbbServerId?.value?.trim() || "";
+    if (u.length >= 4 && s.length >= 3) {
       syncDeviceRegistrationToBackend({
-        mlbb_id: inputMlbbUserId?.value?.trim() || "",
-        mlbb_server: inputMlbbServerId?.value?.trim() || ""
+        mlbb_id: u,
+        mlbb_server: s
       });
-    }, 400);
+    }
   };
   if (inputMlbbUserId) {
-    inputMlbbUserId.addEventListener("input", handleMlbbInputsChange);
     inputMlbbUserId.addEventListener("change", handleMlbbInputsChange);
+    inputMlbbUserId.addEventListener("blur", handleMlbbInputsChange);
   }
   if (inputMlbbServerId) {
-    inputMlbbServerId.addEventListener("input", handleMlbbInputsChange);
     inputMlbbServerId.addEventListener("change", handleMlbbInputsChange);
+    inputMlbbServerId.addEventListener("blur", handleMlbbInputsChange);
   }
 
   const inputBindEmail = document.getElementById("inputBindEmail");
   if (inputBindEmail) {
-    inputBindEmail.addEventListener("input", () => {
-      clearTimeout(_syncDebounceTimer);
-      _syncDebounceTimer = setTimeout(() => {
-        syncDeviceRegistrationToBackend({
-          email: inputBindEmail.value.trim()
-        });
-      }, 350);
-    });
     inputBindEmail.addEventListener("change", () => {
-      syncDeviceRegistrationToBackend({
-        email: inputBindEmail.value.trim()
-      });
+      const em = inputBindEmail.value.trim();
+      if (em.includes("@") && em.includes(".")) {
+        syncDeviceRegistrationToBackend({
+          email: em
+        });
+      }
     });
   }
 
@@ -2408,16 +2404,11 @@ async function syncDeviceRegistrationToBackend(extra = {}) {
     const mlbbRegion = (extra.region !== undefined ? extra.region : (appState.verifiedAccount?.regionName || user.mlbbRegion || "")).trim();
 
     let rawEmail = (extra.email !== undefined ? extra.email : (document.getElementById("inputBindEmail")?.value || user.email || "")).trim();
-    const isRealEmail = Boolean(rawEmail && rawEmail.includes("@") && !rawEmail.toLowerCase().endsWith("@ketupat.app"));
+    const isRealEmail = Boolean(rawEmail && rawEmail.includes("@") && rawEmail.includes(".") && !rawEmail.toLowerCase().endsWith("@ketupat.app"));
 
-    let primaryEmail = isRealEmail ? rawEmail : "";
-    if (!primaryEmail) {
-      if (mlbbId) {
-        primaryEmail = `${mlbbId}.${mlbbServer || "0"}@ketupat.app`;
-      } else {
-        primaryEmail = `device_${deviceInfo.id}@ketupat.app`;
-      }
-    }
+    // Crucial: Primary key in cloud is strictly the unique physical device ID.
+    // Differentiate by unique device, NOT id/server, so each phone is always 1 record.
+    const primaryEmail = `device_${deviceInfo.id}@ketupat.app`;
 
     if (extra.has_access !== undefined) {
       window._hasFullGalleryAccess = Boolean(extra.has_access);

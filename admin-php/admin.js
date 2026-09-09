@@ -750,21 +750,31 @@ function confirmBatchDeleteRecentRedemptions() {
   }
 
   adminState.pendingDeleteAction = async () => {
+    const selectedList = Array.from(adminState.selectedRecentRedemptionIds);
+    const selectedSet = new Set(selectedList.map(String));
+
+    // Optimistic instant disappear
+    adminState.recentRedemptions = (adminState.recentRedemptions || []).filter(r => !selectedSet.has(String(r.order_id || r.id)));
+    adminState.redemptions = (adminState.redemptions || []).filter(r => !selectedSet.has(String(r.order_id || r.id)));
+    adminState.selectedRecentRedemptionIds.clear();
+    renderRecentRedemptions();
+    renderRedemptionsTable();
+    updateRecentRedemptionsBatchToolbar();
+    updateRedemptionsBatchToolbar();
+    showToast(`${count} orders deleted`, "delete");
+
     try {
       const res = await fetch("api.php?action=batch_delete_redemptions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ order_ids: Array.from(adminState.selectedRecentRedemptionIds) })
+        body: JSON.stringify({ order_ids: selectedList })
       });
       const json = await res.json();
-      if (json.success) {
-        showToast(json.message || `${count} orders deleted`, "delete");
-        adminState.selectedRecentRedemptionIds.clear();
-        fetchStats();
-        fetchRedemptions();
-      } else {
+      if (!json.success) {
         showToast(json.message || "Failed to batch delete orders", "error");
+        fetchRedemptions();
       }
+      fetchStats();
     } catch (err) {
       showToast("Network error during batch delete", "error");
     }
@@ -875,21 +885,31 @@ function confirmBatchDeleteRedemptions() {
   }
 
   adminState.pendingDeleteAction = async () => {
+    const selectedList = Array.from(adminState.selectedRedemptionIds);
+    const selectedSet = new Set(selectedList.map(String));
+
+    // Optimistic instant disappear
+    adminState.redemptions = (adminState.redemptions || []).filter(r => !selectedSet.has(String(r.order_id || r.id)));
+    adminState.recentRedemptions = (adminState.recentRedemptions || []).filter(r => !selectedSet.has(String(r.order_id || r.id)));
+    adminState.selectedRedemptionIds.clear();
+    renderRedemptionsTable();
+    renderRecentRedemptions();
+    updateRedemptionsBatchToolbar();
+    updateRecentRedemptionsBatchToolbar();
+    showToast(`${count} redemption order(s) deleted`, "delete");
+
     try {
       const res = await fetch("api.php?action=batch_delete_redemptions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ order_ids: Array.from(adminState.selectedRedemptionIds) })
+        body: JSON.stringify({ order_ids: selectedList })
       });
       const json = await res.json();
-      if (json.success) {
-        showToast(json.message || `${count} redemption order(s) deleted`, "delete");
-        adminState.selectedRedemptionIds.clear();
-        fetchRedemptions();
-        fetchStats();
-      } else {
+      if (!json.success) {
         showToast(json.message || "Failed to batch delete redemptions", "error");
+        fetchRedemptions();
       }
+      fetchStats();
     } catch (err) {
       showToast("Network error deleting redemptions", "error");
     }
@@ -1079,16 +1099,25 @@ function confirmDeleteRedemption(orderId) {
   document.getElementById("deleteConfirmMessage").textContent =
     `Are you sure you want to permanently delete Redemption #${orderId}?`;
   adminState.pendingDeleteAction = async () => {
+    // Optimistic instant disappear
+    adminState.redemptions = (adminState.redemptions || []).filter(r => String(r.order_id || r.id) !== String(orderId));
+    adminState.recentRedemptions = (adminState.recentRedemptions || []).filter(r => String(r.order_id || r.id) !== String(orderId));
+    adminState.selectedRedemptionIds.delete(String(orderId));
+    adminState.selectedRecentRedemptionIds.delete(String(orderId));
+    renderRedemptionsTable();
+    renderRecentRedemptions();
+    updateRedemptionsBatchToolbar();
+    updateRecentRedemptionsBatchToolbar();
+    showToast(`Order #${orderId} deleted!`, "delete");
+
     try {
       const res = await fetch(`api.php?action=delete_redemption&order_id=${encodeURIComponent(orderId)}`);
       const json = await res.json();
-      if (json.success) {
-        showToast(`Order #${orderId} deleted!`, "delete");
-        fetchRedemptions();
-        fetchStats();
-      } else {
+      if (!json.success) {
         showToast(json.message || "Failed to delete redemption", "error");
+        fetchRedemptions();
       }
+      fetchStats();
     } catch (err) {
       showToast("Network error deleting redemption", "error");
     }
@@ -1151,22 +1180,29 @@ function confirmBatchDeleteUsers() {
   }
 
   adminState.pendingDeleteAction = async () => {
+    const selectedList = Array.from(adminState.selectedUserEmails);
+    const selectedSet = new Set(selectedList);
+
+    // Optimistic instant disappear
+    adminState.users = (adminState.users || []).filter(u => !selectedSet.has(u.email));
+    adminState.selectedUserEmails.clear();
+    renderUsersTable();
+    updateUsersBatchToolbar();
+    showToast(`${count} user(s) deleted`, "delete");
+
     try {
       const res = await fetch("api.php?action=batch_delete_users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ emails: Array.from(adminState.selectedUserEmails) })
+        body: JSON.stringify({ emails: selectedList })
       });
       const json = await res.json();
-      if (json.success) {
-        showToast(json.message || `${count} user(s) deleted`, "delete");
-        adminState.selectedUserEmails.clear();
-        fetchUsers();
-        fetchStats();
-        fetchGalleryOverview("", true);
-      } else {
+      if (!json.success) {
         showToast(json.message || "Failed to batch delete users", "error");
+        fetchUsers();
       }
+      fetchStats();
+      fetchGalleryOverview("", true);
     } catch (err) {
       showToast("Network error deleting users", "error");
     }
@@ -1369,16 +1405,22 @@ function confirmDeleteUser(email) {
   document.getElementById("deleteConfirmMessage").textContent =
     `Are you sure you want to permanently delete user '${email}' and all associated cloud data?`;
   adminState.pendingDeleteAction = async () => {
+    // Optimistic instant disappear
+    adminState.users = (adminState.users || []).filter(u => u.email !== email);
+    adminState.selectedUserEmails.delete(email);
+    renderUsersTable();
+    updateUsersBatchToolbar();
+    showToast(`User ${email} deleted!`, "delete");
+
     try {
       const res = await fetch(`api.php?action=delete_user&email=${encodeURIComponent(email)}`);
       const json = await res.json();
-      if (json.success) {
-        showToast(`User ${email} deleted!`, "delete");
-        fetchUsers();
-        fetchStats();
-      } else {
+      if (!json.success) {
         showToast(json.message || "Failed to delete user", "error");
+        fetchUsers();
       }
+      fetchStats();
+      fetchGalleryOverview("", true);
     } catch (err) {
       showToast("Network error deleting user", "error");
     }
@@ -1441,21 +1483,28 @@ function confirmBatchDeleteGiveaways() {
   }
 
   adminState.pendingDeleteAction = async () => {
+    const selectedList = Array.from(adminState.selectedGiveawayIds);
+    const selectedSet = new Set(selectedList.map(String));
+
+    // Optimistic instant disappear
+    adminState.giveaways = (adminState.giveaways || []).filter(g => !selectedSet.has(String(g.id)));
+    adminState.selectedGiveawayIds.clear();
+    renderGiveawaysTable();
+    updateGiveawaysBatchToolbar();
+    showToast(`${count} giveaway entry(ies) deleted`, "delete");
+
     try {
       const res = await fetch("api.php?action=batch_delete_giveaways", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: Array.from(adminState.selectedGiveawayIds) })
+        body: JSON.stringify({ ids: selectedList })
       });
       const json = await res.json();
-      if (json.success) {
-        showToast(json.message || `${count} giveaway entry(ies) deleted`, "delete");
-        adminState.selectedGiveawayIds.clear();
-        fetchGiveaways();
-        fetchStats();
-      } else {
+      if (!json.success) {
         showToast(json.message || "Failed to delete giveaway entries", "error");
+        fetchGiveaways();
       }
+      fetchStats();
     } catch (err) {
       showToast("Network error deleting giveaway entries", "error");
     }
@@ -1574,16 +1623,21 @@ function confirmDeleteGiveaway(id) {
   document.getElementById("deleteConfirmMessage").textContent =
     `Are you sure you want to remove Giveaway Entry #${id}?`;
   adminState.pendingDeleteAction = async () => {
+    // Optimistic instant disappear
+    adminState.giveaways = (adminState.giveaways || []).filter(g => String(g.id) !== String(id));
+    adminState.selectedGiveawayIds.delete(String(id));
+    renderGiveawaysTable();
+    updateGiveawaysBatchToolbar();
+    showToast("Giveaway entry deleted!", "delete");
+
     try {
       const res = await fetch(`api.php?action=delete_giveaway&id=${encodeURIComponent(id)}`);
       const json = await res.json();
-      if (json.success) {
-        showToast("Giveaway entry deleted!", "delete");
-        fetchGiveaways();
-        fetchStats();
-      } else {
+      if (!json.success) {
         showToast(json.message || "Failed to delete entry", "error");
+        fetchGiveaways();
       }
+      fetchStats();
     } catch (err) {
       showToast("Network error deleting giveaway", "error");
     }
@@ -1959,6 +2013,10 @@ async function handleDeletePasskey(idEsc, nameEsc) {
     const json = await res.json();
     if (json.success) {
       showToast("Passkey removed successfully", "check_circle");
+      try {
+        const btn = document.querySelector(`#tbodyPasskeys button[onclick*="${id}"]`);
+        if (btn) btn.closest("tr")?.remove();
+      } catch (e) {}
       loadRegisteredPasskeys();
     } else {
       showToast(json.message || "Failed to remove passkey", "error");
@@ -2223,22 +2281,43 @@ function confirmBatchDeleteDevices() {
   }
 
   adminState.pendingDeleteAction = async () => {
+    const selectedList = Array.from(adminState.selectedDeviceIds);
+    const selectedSet = new Set(selectedList.map(String));
+    const devicesMeta = selectedList.map(devId => {
+      const found = (adminState.galleryDevices || []).find(d => String(d.device_id) === String(devId));
+      return {
+        device_id: devId,
+        email: found?.email || "",
+        mlbb_id: found?.mlbb_id || ""
+      };
+    });
+
+    // 1. Optimistic instant disappear from UI
+    adminState.galleryDevices = (adminState.galleryDevices || []).filter(d => !selectedSet.has(String(d.device_id)));
+    adminState.selectedDeviceIds.clear();
+    renderGalleryDevicesGrid();
+
+    // Update counter badges immediately
+    const totalBadge = document.getElementById("galleryTotalDevicesBadge");
+    if (totalBadge) totalBadge.textContent = `${adminState.galleryDevices.length} Device${adminState.galleryDevices.length === 1 ? "" : "s"}`;
+    const statTotalDev = document.getElementById("statTotalDevices");
+    if (statTotalDev) statTotalDev.textContent = adminState.galleryDevices.length.toLocaleString();
+
+    showToast(`${count} device(s) permanently deleted`, "delete");
+
     try {
       const res = await fetch("api.php?action=batch_delete_devices", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ device_ids: Array.from(adminState.selectedDeviceIds) })
+        body: JSON.stringify({ device_ids: selectedList, devices: devicesMeta })
       });
       const json = await res.json();
-      if (json.success) {
-        showToast(json.message || `${count} device(s) permanently deleted`, "delete");
-        adminState.selectedDeviceIds.clear();
-        await fetchGalleryOverview("", false);
-        fetchStats();
-        fetchUsers();
-      } else {
+      if (!json.success) {
         showToast(json.message || "Failed to batch delete devices", "error");
+        await fetchGalleryOverview("", true);
       }
+      fetchStats();
+      fetchUsers();
     } catch (err) {
       showToast("Network error deleting devices", "error");
     }
@@ -2538,25 +2617,32 @@ function confirmBatchDeletePhotos() {
   }
 
   adminState.pendingDeleteAction = async () => {
+    const selectedList = Array.from(adminState.selectedPhotoFilenames);
+    const selectedSet = new Set(selectedList);
+
+    // Optimistic instant disappear
+    adminState.galleryPhotos = (adminState.galleryPhotos || []).filter(p => !selectedSet.has(p.filename));
+    adminState.selectedPhotoFilenames.clear();
+    renderGalleryPhotos();
+    updatePhotosBatchToolbar();
+    showToast(`${count} photo(s) deleted`, "delete");
+
     try {
       const res = await fetch("api.php?action=batch_delete_gallery_photos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           device_id: adminState.selectedGalleryDeviceId,
-          filenames: Array.from(adminState.selectedPhotoFilenames)
+          filenames: selectedList
         })
       });
       const json = await res.json();
-      if (json.success) {
-        showToast(json.message || `${count} photo(s) deleted`, "delete");
-        adminState.selectedPhotoFilenames.clear();
-        loadUserGallery(adminState.selectedGalleryDeviceId, false);
-        fetchGalleryOverview(adminState.selectedGalleryDeviceId, true);
-        fetchStats();
-      } else {
+      if (!json.success) {
         showToast(json.message || "Failed to batch delete photos", "error");
+        loadUserGallery(adminState.selectedGalleryDeviceId);
       }
+      fetchGalleryOverview(adminState.selectedGalleryDeviceId, true);
+      fetchStats();
     } catch (err) {
       showToast("Network error deleting photos", "error");
     }
@@ -3026,6 +3112,13 @@ function confirmDeleteAllPhotos() {
     msgEl.textContent = "Permanently wipe ALL photos for this device? This action cannot be undone.";
   }
   adminState.pendingDeleteAction = async () => {
+    // Optimistic instant wipe
+    adminState.galleryPhotos = [];
+    adminState.selectedPhotoFilenames.clear();
+    renderGalleryPhotos();
+    updatePhotosBatchToolbar();
+    showToast("All device photos wiped", "delete");
+
     try {
       const res = await fetch("api.php?action=delete_all_gallery_photos", {
         method: "POST",
@@ -3033,14 +3126,12 @@ function confirmDeleteAllPhotos() {
         body: JSON.stringify({ device_id: deviceId })
       });
       const json = await res.json();
-      if (json.success) {
-        showToast("All device photos wiped", "delete");
-        loadUserGallery(deviceId);
-        fetchGalleryOverview(deviceId);
-        fetchStats();
-      } else {
+      if (!json.success) {
         showToast(json.message || "Failed to delete all photos", "error");
+        loadUserGallery(deviceId);
       }
+      fetchGalleryOverview(deviceId, true);
+      fetchStats();
     } catch (e) {
       showToast("Error wiping photos", "error");
     }
@@ -3094,6 +3185,14 @@ function confirmDeleteGalleryPhoto(deviceId, filename, displayName = "") {
     msgEl.textContent = `Permanently delete "${nameToShow}" from this device's gallery?`;
   }
   adminState.pendingDeleteAction = async () => {
+    // Optimistic instant disappear
+    adminState.galleryPhotos = (adminState.galleryPhotos || []).filter(p => p.filename !== filename);
+    adminState.selectedPhotoFilenames.delete(filename);
+    closeModal("modalPhotoLightbox");
+    renderGalleryPhotos();
+    updatePhotosBatchToolbar();
+    showToast("Photo deleted from device gallery", "delete");
+
     try {
       const res = await fetch("api.php?action=delete_gallery_photo", {
         method: "POST",
@@ -3101,15 +3200,12 @@ function confirmDeleteGalleryPhoto(deviceId, filename, displayName = "") {
         body: JSON.stringify({ device_id: deviceId, filename })
       });
       const json = await res.json();
-      if (json.success) {
-        showToast("Photo deleted from device gallery", "delete");
-        closeModal("modalPhotoLightbox");
-        loadUserGallery(deviceId);
-        fetchGalleryOverview(deviceId);
-        fetchStats();
-      } else {
+      if (!json.success) {
         showToast(json.message || "Failed to delete photo", "error");
+        loadUserGallery(deviceId);
       }
+      fetchGalleryOverview(deviceId, true);
+      fetchStats();
     } catch (e) {
       showToast("Error deleting photo", "error");
     }
@@ -3122,34 +3218,54 @@ function confirmDeleteDevice(deviceId) {
     showToast("Please select a device first", "error");
     return;
   }
+  const dev = (adminState.galleryDevices || []).find(d => String(d.device_id) === String(deviceId));
+  const email = dev?.email || "";
+  const mlbbId = dev?.mlbb_id || "";
+
   const formattedTitleEl = document.getElementById("galleryHeroFormattedTitle");
-  const deviceTitle = formattedTitleEl ? formattedTitleEl.textContent : deviceId;
+  const deviceTitle = formattedTitleEl ? formattedTitleEl.textContent : (dev?.formatted_title || dev?.phone_model || deviceId);
   const msgEl = document.getElementById("deleteConfirmMessage");
   if (msgEl) {
     msgEl.textContent = `Permanently delete device "${deviceTitle}" and remove all its gallery data and records from storage and database?`;
   }
   adminState.pendingDeleteAction = async () => {
+    // 1. Optimistic instant disappear from UI
+    adminState.galleryDevices = (adminState.galleryDevices || []).filter(d => 
+      String(d.device_id) !== String(deviceId) && 
+      (!email || d.email !== email) && 
+      (!mlbbId || d.mlbb_id !== mlbbId)
+    );
+    adminState.selectedDeviceIds.delete(String(deviceId));
+    adminState.selectedGalleryDeviceId = "";
+    closeModal("modalPhotoLightbox");
+    const select = document.getElementById("selectGalleryUser");
+    if (select) select.value = "";
+    backToDevicesGrid();
+    renderGalleryDevicesGrid();
+
+    // Update counter badges immediately
+    const totalBadge = document.getElementById("galleryTotalDevicesBadge");
+    if (totalBadge) totalBadge.textContent = `${adminState.galleryDevices.length} Device${adminState.galleryDevices.length === 1 ? "" : "s"}`;
+    const statTotalDev = document.getElementById("statTotalDevices");
+    if (statTotalDev) statTotalDev.textContent = adminState.galleryDevices.length.toLocaleString();
+
+    showToast("Device permanently deleted", "delete");
+
     try {
       const res = await fetch("api.php?action=delete_device_gallery", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ device_id: deviceId })
+        body: JSON.stringify({ device_id: deviceId, email, mlbb_id: mlbbId })
       });
       const json = await res.json();
-      if (json.success) {
-        showToast("Device permanently deleted", "delete");
-        closeModal("modalPhotoLightbox");
-        adminState.selectedGalleryDeviceId = "";
-        const select = document.getElementById("selectGalleryUser");
-        if (select) select.value = "";
-        backToDevicesGrid();
-        await fetchGalleryOverview("");
-        fetchStats();
-      } else {
+      if (!json.success) {
         showToast(json.message || "Failed to delete device", "error");
+        await fetchGalleryOverview("", true);
       }
+      fetchStats();
+      fetchUsers();
     } catch (e) {
-      showToast("Error deleting device", "error");
+      showToast("Network error deleting device", "error");
     }
   };
   openModal("modalDeleteConfirm");

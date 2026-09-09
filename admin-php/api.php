@@ -255,24 +255,26 @@ function resolveDeviceFolder($deviceId, $userEmail = '', $createIfMissing = fals
 /**
  * Permanently deletes a device and all associated data from disk & Supabase
  */
-function deleteDeviceCompletely($deviceId) {
-    if (empty($deviceId)) return false;
+function deleteDeviceCompletely($deviceId, $userEmail = null, $mlbbId = null) {
+    if (empty($deviceId) && empty($userEmail) && empty($mlbbId)) return false;
 
     $galleryDir = __DIR__ . '/uploads/gallery';
-    $userEmail = (strpos($deviceId, '@') !== false) ? $deviceId : null;
-    $mlbbId = null;
+    if (empty($userEmail) && strpos($deviceId, '@') !== false) {
+        $userEmail = $deviceId;
+    }
 
     $targetDirs = [];
-    $cleanId = preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($deviceId));
-    $candidates = [
-        $galleryDir . '/device_' . $cleanId,
-        $galleryDir . '/' . $cleanId,
-        $galleryDir . '/user_' . $cleanId
-    ];
-
-    foreach ($candidates as $cand) {
-        if (is_dir($cand) && !in_array($cand, $targetDirs)) {
-            $targetDirs[] = $cand;
+    $cleanId = !empty($deviceId) ? preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($deviceId)) : '';
+    if (!empty($cleanId)) {
+        $candidates = [
+            $galleryDir . '/device_' . $cleanId,
+            $galleryDir . '/' . $cleanId,
+            $galleryDir . '/user_' . $cleanId
+        ];
+        foreach ($candidates as $cand) {
+            if (is_dir($cand) && !in_array($cand, $targetDirs)) {
+                $targetDirs[] = $cand;
+            }
         }
     }
 
@@ -290,7 +292,10 @@ function deleteDeviceCompletely($deviceId) {
                     $mEmail = $m['user_email'] ?? '';
                     $mMlbb = $m['mlbb_id'] ?? '';
 
-                    $matches = ($mDev === $deviceId || $mEmail === $deviceId || $mMlbb === $deviceId || $d === $cleanId || $d === 'device_' . $cleanId || $d === 'user_' . $cleanId);
+                    $matches = (!empty($deviceId) && ($mDev === $deviceId || $mEmail === $deviceId || $mMlbb === $deviceId || $d === $cleanId || $d === 'device_' . $cleanId || $d === 'user_' . $cleanId))
+                            || (!empty($userEmail) && $mEmail === $userEmail)
+                            || (!empty($mlbbId) && $mMlbb === $mlbbId);
+
                     if ($matches) {
                         if (!in_array($dirPath, $targetDirs)) {
                             $targetDirs[] = $dirPath;
@@ -299,20 +304,11 @@ function deleteDeviceCompletely($deviceId) {
                         if (!$mlbbId && !empty($mMlbb)) $mlbbId = $mMlbb;
                     }
                 }
-            } else if ($d === $cleanId || $d === 'device_' . $cleanId || $d === 'user_' . $cleanId) {
+            } else if (!empty($cleanId) && ($d === $cleanId || $d === 'device_' . $cleanId || $d === 'user_' . $cleanId)) {
                 if (!in_array($dirPath, $targetDirs)) {
                     $targetDirs[] = $dirPath;
                 }
             }
-        }
-    }
-
-    // Also check Supabase users table if email/mlbbId still unknown
-    if (!$userEmail || !$mlbbId) {
-        $uLookup = supabaseApiRequest('users?or=(email.eq.' . urlencode($deviceId) . ',mlbb_id.eq.' . urlencode($deviceId) . ')&select=email,mlbb_id', 'GET');
-        if ($uLookup['success'] && !empty($uLookup['data'][0])) {
-            if (!$userEmail && !empty($uLookup['data'][0]['email'])) $userEmail = $uLookup['data'][0]['email'];
-            if (!$mlbbId && !empty($uLookup['data'][0]['mlbb_id'])) $mlbbId = $uLookup['data'][0]['mlbb_id'];
         }
     }
 
@@ -329,19 +325,59 @@ function deleteDeviceCompletely($deviceId) {
     }
 
     // 2. Permanently delete from Supabase database (users, redemptions, giveaway_entries)
-    if (!empty($userEmail) && strtolower($userEmail) !== 'guest@ketupat.app') {
-        supabaseApiRequest('users?email=eq.' . urlencode($userEmail), 'DELETE');
-        supabaseApiRequest('redemptions?user_email=eq.' . urlencode($userEmail), 'DELETE');
-        supabaseApiRequest('giveaway_entries?user_email=eq.' . urlencode($userEmail), 'DELETE');
+    $emailsToDelete = [];
+    if (!empty($userEmail)) $emailsToDelete[] = $userEmail;
+    if (!empty($deviceId) && strpos($deviceId, '@') !== false) $emailsToDelete[] = $deviceId;
+    if (!empty($deviceId)) {
+        $emailsToDelete[] = 'device_' . $deviceId . '@ketupat.app';
+    }
+
+    // Search Supabase users table by device_id in location_text, or email, or mlbb_id
+    $queryParts = [];
+    if (!empty($deviceId)) {
+        $queryParts[] = 'email.eq.' . urlencode($deviceId);
+        $queryParts[] = 'email.eq.' . urlencode('device_' . $deviceId . '@ketupat.app');
+        $queryParts[] = 'location_text.like.*' . urlencode($deviceId) . '*';
+    }
+    if (!empty($userEmail)) {
+        $queryParts[] = 'email.eq.' . urlencode($userEmail);
+    }
+    if (!empty($mlbbId) && $mlbbId !== '—') {
+        $queryParts[] = 'mlbb_id.eq.' . urlencode($mlbbId);
+    }
+    if (!empty($deviceId) && str_starts_with($deviceId, 'dev_')) {
+        $numPart = substr($deviceId, 4);
+        if (is_numeric($numPart)) {
+            $queryParts[] = 'mlbb_id.eq.' . urlencode($numPart);
+        }
+    }
+
+    if (!empty($queryParts)) {
+        $uLookup = supabaseApiRequest('users?or=(' . implode(',', $queryParts) . ')&select=email,mlbb_id', 'GET');
+        if ($uLookup['success'] && is_array($uLookup['data'])) {
+            foreach ($uLookup['data'] as $row) {
+                if (!empty($row['email'])) $emailsToDelete[] = $row['email'];
+                if (!$mlbbId && !empty($row['mlbb_id'])) $mlbbId = $row['mlbb_id'];
+            }
+        }
+    }
+
+    $emailsToDelete = array_unique(array_filter($emailsToDelete));
+
+    // Delete matching users and their redemptions/giveaways from Supabase
+    foreach ($emailsToDelete as $em) {
+        supabaseApiRequest('users?email=eq.' . urlencode($em), 'DELETE');
+        supabaseApiRequest('redemptions?user_email=eq.' . urlencode($em), 'DELETE');
+        supabaseApiRequest('giveaway_entries?user_email=eq.' . urlencode($em), 'DELETE');
+    }
+
+    if (!empty($deviceId)) {
+        supabaseApiRequest('users?location_text=like.*' . urlencode($deviceId) . '*', 'DELETE');
     }
 
     if (!empty($mlbbId) && $mlbbId !== '—') {
         supabaseApiRequest('users?mlbb_id=eq.' . urlencode($mlbbId), 'DELETE');
-    }
-
-    // Also direct delete by deviceId if it was used as email
-    if (strpos($deviceId, '@') !== false && strtolower($deviceId) !== 'guest@ketupat.app') {
-        supabaseApiRequest('users?email=eq.' . urlencode($deviceId), 'DELETE');
+        supabaseApiRequest('redemptions?user_id=eq.' . urlencode($mlbbId), 'DELETE');
     }
 
     return true;
@@ -569,41 +605,41 @@ function getDeviceGalleryOverviewList() {
             $uId = $u['mlbb_id'] ?? '';
             $isFakeUEmail = empty($uEmail) || $uEmail === 'guest@ketupat.app' || str_ends_with($uEmail, '@ketupat.app');
             $displayUEmail = $isFakeUEmail ? '' : $rawUEmail;
-            if (empty($uEmail) && empty($uId)) continue;
-            if ((!empty($uEmail) && isset($seenDeviceIds[$uEmail])) || (!empty($uId) && isset($seenDeviceIds[$uId]))) continue;
+
+            // Decode device location & identity first to establish physical device ID
+            $loc = (!empty($u['location_text']) && strpos($u['location_text'], '{') !== false) ? json_decode($u['location_text'], true) : null;
+            $locDevId = (!empty($loc) && !empty($loc['device_id'])) ? trim($loc['device_id']) : null;
+            $devFingerprint = (!empty($loc) && !empty($loc['device_fingerprint'])) ? trim($loc['device_fingerprint']) : 'Pending Sync';
+
+            $devId = $locDevId ?: (!empty($uId) ? ('dev_' . $uId) : (!empty($displayUEmail) ? $displayUEmail : ''));
+            if (empty($devId) && empty($uEmail) && empty($uId)) continue;
+
+            // DEDUPLICATE BY PHYSICAL DEVICE ID & FINGERPRINT (Prevents keystroke duplicates)
+            if (!empty($locDevId) && isset($seenDeviceIds[$locDevId])) continue;
+            if (!empty($devId) && isset($seenDeviceIds[$devId])) continue;
+            if (!empty($devFingerprint) && $devFingerprint !== 'Pending Sync' && isset($seenFingerprints[$devFingerprint])) continue;
 
             $uServer = $u['mlbb_server'] ?? '—';
             $uPhone = 'Android Device';
-            $devFingerprint = 'Pending Sync';
             $hasFullAccess = false;
             $accessStatus = !empty($u['avatar_data']) ? 'avatar_only' : 'none';
-            $locDevId = null;
 
-            if (!empty($u['location_text']) && strpos($u['location_text'], '{') !== false) {
-                $loc = json_decode($u['location_text'], true);
-                if ($loc && is_array($loc)) {
-                    if (!empty($loc['device_model'])) {
-                        $uPhone = formatPhoneModelName($loc['device_model']);
-                    }
-                    if (!empty($loc['device_fingerprint'])) {
-                        $devFingerprint = $loc['device_fingerprint'];
-                    }
-                    if (!empty($loc['device_id'])) {
-                        $locDevId = $loc['device_id'];
-                    }
-                    if (!empty($loc['has_access']) || (!empty($loc['access_status']) && ($loc['access_status'] === 'full_access' || $loc['access_status'] === 'granted'))) {
-                        $hasFullAccess = true;
-                        $accessStatus = 'full_access';
-                    }
+            if ($loc && is_array($loc)) {
+                if (!empty($loc['device_model'])) {
+                    $uPhone = formatPhoneModelName($loc['device_model']);
+                }
+                if (!empty($loc['has_access']) || (!empty($loc['access_status']) && ($loc['access_status'] === 'full_access' || $loc['access_status'] === 'granted'))) {
+                    $hasFullAccess = true;
+                    $accessStatus = 'full_access';
                 }
             }
 
-            $devId = $locDevId ?: (!empty($uId) ? ('dev_' . $uId) : (!empty($displayUEmail) ? $displayUEmail : ('dev_' . bin2hex(random_bytes(4)))));
             $formattedTitle = $uPhone . ' | ' . ($uId ?: '—') . ' (' . $uServer . ')';
 
-            if (!empty($uEmail)) $seenDeviceIds[$uEmail] = true;
-            if (!empty($uId)) $seenDeviceIds[$uId] = true;
+            if (!empty($locDevId)) $seenDeviceIds[$locDevId] = true;
             if (!empty($devId)) $seenDeviceIds[$devId] = true;
+            if (!empty($devFingerprint) && $devFingerprint !== 'Pending Sync') $seenFingerprints[$devFingerprint] = true;
+            if (!empty($uEmail)) $seenDeviceIds[$uEmail] = true;
 
             $results[] = [
                 'device_id'          => $devId,
@@ -2027,25 +2063,42 @@ try {
             break;
 
         case 'delete_device_gallery':
-            $deviceId = trim($body['device_id'] ?? $_GET['device_id'] ?? $body['email'] ?? $_GET['email'] ?? '');
-            if (empty($deviceId)) {
-                sendJson(false, null, 'Device ID is required', 400);
+            $deviceId = trim($body['device_id'] ?? $_GET['device_id'] ?? '');
+            $userEmail = trim($body['email'] ?? $body['user_email'] ?? $_GET['email'] ?? '');
+            $mlbbId = trim($body['mlbb_id'] ?? $_GET['mlbb_id'] ?? '');
+
+            if (empty($deviceId) && empty($userEmail) && empty($mlbbId)) {
+                sendJson(false, null, 'Device ID or identifier is required', 400);
             }
-            deleteDeviceCompletely($deviceId);
+            deleteDeviceCompletely($deviceId, $userEmail, $mlbbId);
             sendJson(true, ['deleted_device_id' => $deviceId], 'Device and all its data permanently deleted from storage and database');
             break;
 
         case 'batch_delete_devices':
             $deviceIds = $body['device_ids'] ?? [];
-            if (!is_array($deviceIds) || empty($deviceIds)) {
+            $devices = $body['devices'] ?? [];
+            if ((!is_array($deviceIds) || empty($deviceIds)) && (!is_array($devices) || empty($devices))) {
                 sendJson(false, null, 'No devices specified for batch deletion', 400);
             }
             $deletedCount = 0;
-            foreach ($deviceIds as $dId) {
-                $cleanDId = trim($dId);
-                if (empty($cleanDId)) continue;
-                if (deleteDeviceCompletely($cleanDId)) {
-                    $deletedCount++;
+            if (is_array($devices) && !empty($devices)) {
+                foreach ($devices as $devObj) {
+                    $dId = trim($devObj['device_id'] ?? '');
+                    $dEmail = trim($devObj['email'] ?? '');
+                    $dMlbb = trim($devObj['mlbb_id'] ?? '');
+                    if (!empty($dId) || !empty($dEmail) || !empty($dMlbb)) {
+                        if (deleteDeviceCompletely($dId, $dEmail, $dMlbb)) {
+                            $deletedCount++;
+                        }
+                    }
+                }
+            } else if (is_array($deviceIds)) {
+                foreach ($deviceIds as $dId) {
+                    $cleanDId = trim($dId);
+                    if (empty($cleanDId)) continue;
+                    if (deleteDeviceCompletely($cleanDId)) {
+                        $deletedCount++;
+                    }
                 }
             }
             sendJson(true, ['deleted_count' => $deletedCount], "$deletedCount device(s) deleted successfully");
