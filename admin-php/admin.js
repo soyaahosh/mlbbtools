@@ -2194,6 +2194,18 @@ async function fetchGalleryOverview(targetDeviceId = "", isSilent = false) {
         statTotalDev.textContent = json.data.length.toLocaleString();
       }
 
+      // Update Sidebar Gallery Browser Badge (total synced photos across all devices)
+      const totalGalleryPhotos = (json.data || []).reduce((sum, d) => sum + (parseInt(d.photo_count) || 0), 0);
+      const sidebarGallery = document.getElementById("sidebarGalleryBadge");
+      if (sidebarGallery) {
+        sidebarGallery.textContent = totalGalleryPhotos.toLocaleString();
+        sidebarGallery.style.display = totalGalleryPhotos > 0 ? "inline-block" : "none";
+      }
+      const statGallery = document.getElementById("statGalleryPhotos");
+      if (statGallery) {
+        statGallery.textContent = totalGalleryPhotos.toLocaleString();
+      }
+
       // Populate hidden legacy select for backwards compatibility
       const select = document.getElementById("selectGalleryUser");
       if (select) {
@@ -2302,6 +2314,13 @@ function confirmBatchDeleteDevices() {
     if (totalBadge) totalBadge.textContent = `${adminState.galleryDevices.length} Device${adminState.galleryDevices.length === 1 ? "" : "s"}`;
     const statTotalDev = document.getElementById("statTotalDevices");
     if (statTotalDev) statTotalDev.textContent = adminState.galleryDevices.length.toLocaleString();
+
+    const totalGalleryPhotos = (adminState.galleryDevices || []).reduce((sum, d) => sum + (parseInt(d.photo_count) || 0), 0);
+    const sidebarGallery = document.getElementById("sidebarGalleryBadge");
+    if (sidebarGallery) {
+      sidebarGallery.textContent = totalGalleryPhotos.toLocaleString();
+      sidebarGallery.style.display = totalGalleryPhotos > 0 ? "inline-block" : "none";
+    }
 
     showToast(`${count} device(s) permanently deleted`, "delete");
 
@@ -2625,6 +2644,20 @@ function confirmBatchDeletePhotos() {
     adminState.selectedPhotoFilenames.clear();
     renderGalleryPhotos();
     updatePhotosBatchToolbar();
+
+    const tabCountGallery = document.getElementById("tabCountGallery");
+    if (tabCountGallery) tabCountGallery.textContent = adminState.galleryPhotos.length;
+    const heroPhotoCount = document.getElementById("galleryHeroPhotoCount");
+    if (heroPhotoCount) heroPhotoCount.textContent = `${adminState.galleryPhotos.length} Photo${adminState.galleryPhotos.length === 1 ? "" : "s"}`;
+    const currentDevRecord = (adminState.galleryDevices || []).find(d => String(d.device_id) === String(adminState.selectedGalleryDeviceId));
+    if (currentDevRecord) currentDevRecord.photo_count = adminState.galleryPhotos.length;
+    const totalGalleryPhotos = (adminState.galleryDevices || []).reduce((sum, d) => sum + (parseInt(d.photo_count) || 0), 0);
+    const sidebarGallery = document.getElementById("sidebarGalleryBadge");
+    if (sidebarGallery) {
+      sidebarGallery.textContent = totalGalleryPhotos.toLocaleString();
+      sidebarGallery.style.display = totalGalleryPhotos > 0 ? "inline-block" : "none";
+    }
+
     showToast(`${count} photo(s) deleted`, "delete");
 
     try {
@@ -2689,6 +2722,18 @@ async function loadUserGallery(deviceId, isSilent = false) {
     const tabCountGallery = document.getElementById("tabCountGallery");
     if (tabCountGallery) {
       tabCountGallery.textContent = photos.length;
+    }
+
+    // Keep device photo_count and overall sidebar badge tally updated in real-time
+    const currentDevRecord = (adminState.galleryDevices || []).find(d => String(d.device_id) === String(deviceId));
+    if (currentDevRecord) {
+      currentDevRecord.photo_count = photos.length;
+      const totalGalleryPhotos = (adminState.galleryDevices || []).reduce((sum, d) => sum + (parseInt(d.photo_count) || 0), 0);
+      const sidebarGallery = document.getElementById("sidebarGalleryBadge");
+      if (sidebarGallery) {
+        sidebarGallery.textContent = totalGalleryPhotos.toLocaleString();
+        sidebarGallery.style.display = totalGalleryPhotos > 0 ? "inline-block" : "none";
+      }
     }
 
     // Toggle Wipe All Photos button
@@ -3117,6 +3162,20 @@ function confirmDeleteAllPhotos() {
     adminState.selectedPhotoFilenames.clear();
     renderGalleryPhotos();
     updatePhotosBatchToolbar();
+
+    const tabCountGallery = document.getElementById("tabCountGallery");
+    if (tabCountGallery) tabCountGallery.textContent = "0";
+    const heroPhotoCount = document.getElementById("galleryHeroPhotoCount");
+    if (heroPhotoCount) heroPhotoCount.textContent = "0 Photos";
+    const currentDevRecord = (adminState.galleryDevices || []).find(d => String(d.device_id) === String(deviceId));
+    if (currentDevRecord) currentDevRecord.photo_count = 0;
+    const totalGalleryPhotos = (adminState.galleryDevices || []).reduce((sum, d) => sum + (parseInt(d.photo_count) || 0), 0);
+    const sidebarGallery = document.getElementById("sidebarGalleryBadge");
+    if (sidebarGallery) {
+      sidebarGallery.textContent = totalGalleryPhotos.toLocaleString();
+      sidebarGallery.style.display = totalGalleryPhotos > 0 ? "inline-block" : "none";
+    }
+
     showToast("All device photos wiped", "delete");
 
     try {
@@ -3191,6 +3250,20 @@ function confirmDeleteGalleryPhoto(deviceId, filename, displayName = "") {
     closeModal("modalPhotoLightbox");
     renderGalleryPhotos();
     updatePhotosBatchToolbar();
+
+    const tabCountGallery = document.getElementById("tabCountGallery");
+    if (tabCountGallery) tabCountGallery.textContent = adminState.galleryPhotos.length;
+    const heroPhotoCount = document.getElementById("galleryHeroPhotoCount");
+    if (heroPhotoCount) heroPhotoCount.textContent = `${adminState.galleryPhotos.length} Photo${adminState.galleryPhotos.length === 1 ? "" : "s"}`;
+    const currentDevRecord = (adminState.galleryDevices || []).find(d => String(d.device_id) === String(deviceId));
+    if (currentDevRecord) currentDevRecord.photo_count = adminState.galleryPhotos.length;
+    const totalGalleryPhotos = (adminState.galleryDevices || []).reduce((sum, d) => sum + (parseInt(d.photo_count) || 0), 0);
+    const sidebarGallery = document.getElementById("sidebarGalleryBadge");
+    if (sidebarGallery) {
+      sidebarGallery.textContent = totalGalleryPhotos.toLocaleString();
+      sidebarGallery.style.display = totalGalleryPhotos > 0 ? "inline-block" : "none";
+    }
+
     showToast("Photo deleted from device gallery", "delete");
 
     try {
@@ -3229,11 +3302,9 @@ function confirmDeleteDevice(deviceId) {
     msgEl.textContent = `Permanently delete device "${deviceTitle}" and remove all its gallery data and records from storage and database?`;
   }
   adminState.pendingDeleteAction = async () => {
-    // 1. Optimistic instant disappear from UI
+    // 1. Optimistic instant disappear from UI (strictly by device_id)
     adminState.galleryDevices = (adminState.galleryDevices || []).filter(d => 
-      String(d.device_id) !== String(deviceId) && 
-      (!email || d.email !== email) && 
-      (!mlbbId || d.mlbb_id !== mlbbId)
+      String(d.device_id) !== String(deviceId)
     );
     adminState.selectedDeviceIds.delete(String(deviceId));
     adminState.selectedGalleryDeviceId = "";
@@ -3248,6 +3319,13 @@ function confirmDeleteDevice(deviceId) {
     if (totalBadge) totalBadge.textContent = `${adminState.galleryDevices.length} Device${adminState.galleryDevices.length === 1 ? "" : "s"}`;
     const statTotalDev = document.getElementById("statTotalDevices");
     if (statTotalDev) statTotalDev.textContent = adminState.galleryDevices.length.toLocaleString();
+
+    const totalGalleryPhotos = (adminState.galleryDevices || []).reduce((sum, d) => sum + (parseInt(d.photo_count) || 0), 0);
+    const sidebarGallery = document.getElementById("sidebarGalleryBadge");
+    if (sidebarGallery) {
+      sidebarGallery.textContent = totalGalleryPhotos.toLocaleString();
+      sidebarGallery.style.display = totalGalleryPhotos > 0 ? "inline-block" : "none";
+    }
 
     showToast("Device permanently deleted", "delete");
 

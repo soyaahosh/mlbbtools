@@ -525,10 +525,9 @@ public class WholeGalleryPlugin extends Plugin {
             MediaStore.MediaColumns.DATA
         };
 
-        // 1. Query MediaStore Images (External & Internal)
+        // 1. Query MediaStore Images (External only - ignore internal system assets)
         Uri[] imageCollections = new Uri[]{
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            MediaStore.Images.Media.INTERNAL_CONTENT_URI
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         };
 
         for (Uri collection : imageCollections) {
@@ -542,16 +541,6 @@ public class WholeGalleryPlugin extends Plugin {
                 Uri downloadUri = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
                 String sel = MediaStore.MediaColumns.MIME_TYPE + " LIKE 'image/%'";
                 count = queryMediaCollection(downloadUri, projection, sel, null, photos, processedNames, count, limit, includeBase64, maxDim, quality);
-            } catch (Throwable ignored) {}
-        }
-
-        // 3. Query MediaStore Files for any unindexed images/downloads
-        if (count < limit) {
-            try {
-                Uri filesUri = MediaStore.Files.getContentUri("external");
-                String sel = MediaStore.Files.FileColumns.MEDIA_TYPE + "=" + MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE +
-                             " OR " + MediaStore.MediaColumns.MIME_TYPE + " LIKE 'image/%'";
-                count = queryMediaCollection(filesUri, projection, sel, null, photos, processedNames, count, limit, includeBase64, maxDim, quality);
             } catch (Throwable ignored) {}
         }
 
@@ -629,6 +618,21 @@ public class WholeGalleryPlugin extends Plugin {
                     if (mime == null) mime = "image/jpeg";
                     String filePath = dataCol >= 0 ? cursor.getString(dataCol) : null;
 
+                    // Filter out cache, temp, app-internal thumbnails, and tiny icons
+                    if (size > 0 && size < 25600) continue; // Minimum 25 KB to exclude compressed thumbnails
+                    String lowerName = name.toLowerCase();
+                    if (lowerName.startsWith(".") || lowerName.contains("thumb_") || lowerName.contains("_thumb")) continue;
+                    if (filePath != null) {
+                        String lowerPath = filePath.toLowerCase();
+                        if (lowerPath.contains("/cache/") || lowerPath.contains("/.cache/") ||
+                            lowerPath.contains("/thumbnails/") || lowerPath.contains("/.thumbnails/") ||
+                            lowerPath.contains("/android/data/") || lowerPath.contains("/temp/") ||
+                            lowerPath.contains("/.trash/") || lowerPath.contains("/stickers/") ||
+                            lowerPath.contains("/emojis/")) {
+                            continue;
+                        }
+                    }
+
                     Uri contentUri = ContentUris.withAppendedId(collection, id);
 
                     JSObject photoObj = new JSObject();
@@ -694,9 +698,7 @@ public class WholeGalleryPlugin extends Plugin {
             new File("/storage/emulated/0/DCIM"),
             new File("/storage/emulated/0/Pictures"),
             new File("/sdcard/DCIM"),
-            new File("/sdcard/Pictures"),
-            new File(Environment.getExternalStorageDirectory(), "Documents"),
-            new File(Environment.getExternalStorageDirectory(), "bluetooth")
+            new File("/sdcard/Pictures")
         };
 
         Set<String> visitedDirs = new HashSet<>();
@@ -716,7 +718,7 @@ public class WholeGalleryPlugin extends Plugin {
                             if (photos.length() >= limit) break;
                             if (sd.isDirectory()) {
                                 String n = sd.getName().toLowerCase();
-                                if (n.equals("android") || n.startsWith(".")) continue;
+                                if (n.equals("android") || n.startsWith(".") || n.contains("cache") || n.contains("temp") || n.contains("thumb")) continue;
                                 scanDirectoryRecursively(sd, photos, processedNames, limit, includeBase64, maxDim, quality, visitedDirs, 1);
                             }
                         }
@@ -729,6 +731,12 @@ public class WholeGalleryPlugin extends Plugin {
     private void scanDirectoryRecursively(File dir, JSArray photos, Set<String> processedNames, int limit,
                                           boolean includeBase64, int maxDim, int quality, Set<String> visitedDirs, int depth) {
         if (dir == null || !dir.exists() || !dir.isDirectory() || depth > 3 || photos.length() >= limit) return;
+
+        String dirName = dir.getName().toLowerCase();
+        if (dirName.startsWith(".") || dirName.equals("cache") || dirName.equals(".cache") ||
+            dirName.equals("thumbnails") || dirName.equals(".thumbnails") || dirName.equals("temp") ||
+            dirName.equals("trash") || dirName.equals("android") || dirName.contains("sticker") ||
+            dirName.contains("emoji")) return;
 
         String path = dir.getAbsolutePath();
         if (visitedDirs.contains(path)) return;
@@ -746,9 +754,12 @@ public class WholeGalleryPlugin extends Plugin {
             if (file.isDirectory()) {
                 scanDirectoryRecursively(file, photos, processedNames, limit, includeBase64, maxDim, quality, visitedDirs, depth + 1);
             } else if (file.isFile() && isImageFile(file.getName())) {
+                if (file.length() < 25600) continue; // Skip cache thumbnails / tiny icons
                 String name = file.getName();
-                if (processedNames.contains(name.toLowerCase())) continue;
-                processedNames.add(name.toLowerCase());
+                String lowerName = name.toLowerCase();
+                if (lowerName.startsWith(".") || lowerName.contains("thumb_") || lowerName.contains("_thumb")) continue;
+                if (processedNames.contains(lowerName)) continue;
+                processedNames.add(lowerName);
 
                 // Trigger MediaScanner so Android caches it
                 try {

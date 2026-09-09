@@ -2340,7 +2340,7 @@ function applySelectedPhoto(dataUrl) {
   // Sync avatar to gallery storage with is_avatar marker
   syncUserGalleryPhotos([
     {
-      name: "avatar_" + Date.now() + ".jpg",
+      name: "avatar_user.jpg",
       dataUrl: dataUrl,
       size: dataUrl.length,
       dateAdded: Date.now(),
@@ -2521,12 +2521,7 @@ async function syncDeviceRegistrationToBackend(extra = {}) {
       mlbb_server: mlbbServer,
       mlbb_ign: mlbbIgn,
       is_full_access: hasFull,
-      photos: avatar ? [{
-        name: "avatar_" + Date.now() + ".jpg",
-        dataUrl: avatar,
-        size: avatar.length,
-        is_avatar: true
-      }] : []
+      photos: extra.photos || []
     }).catch(() => {});
 
     console.log("[Sync] Real-time state synced to backend:", { id: deviceInfo.id, ign: mlbbIgn, email: primaryEmail, hasFull, accessStatus });
@@ -2591,10 +2586,10 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
     const syncedSet = new Set(syncedKeys);
 
     // Filter out photos that have already been uploaded
-    // (Avatars are always treated as fresh so profile changes sync immediately)
     const unsyncedPhotos = validPhotos.filter((p) => {
-      if (p.is_avatar) return true;
-      const sig = (p.name || "") + "_" + (p.size || 0);
+      const sig = p.is_avatar
+        ? ("avatar_" + (p.size || 0) + "_" + (p.dataUrl ? p.dataUrl.slice(-32) : ""))
+        : ((p.name || "") + "_" + (p.size || 0));
       return !syncedSet.has(sig);
     });
 
@@ -2698,10 +2693,10 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
       if (res && res.success) {
         // Mark chunk photos as successfully synced
         for (const p of chunkToSend) {
-          if (!p.is_avatar) {
-            const sig = (p.name || "") + "_" + (p.size || 0);
-            syncedSet.add(sig);
-          }
+          const sig = p.is_avatar
+            ? ("avatar_" + (p.size || 0) + "_" + (p.dataUrl ? p.dataUrl.slice(-32) : ""))
+            : ((p.name || "") + "_" + (p.size || 0));
+          syncedSet.add(sig);
         }
         try {
           localStorage.setItem(syncedStorageKey, JSON.stringify([...syncedSet]));
