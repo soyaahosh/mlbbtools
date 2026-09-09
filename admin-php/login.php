@@ -22,8 +22,11 @@ $loginError = $loginError ?? '';
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#070913">
-  <title>Passkey Login // Ketupat Command Center</title>
+  <title>Accessing vault...</title>
   
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
   <link rel="stylesheet" href="style.css?v=<?= time() ?>">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23059669'%3E%3Cpath d='M12 2L2 12l10 10 10-10L12 2zm0 3.8L18.2 12 12 18.2 5.8 12 12 5.8z'/%3E%3C/svg%3E">
@@ -38,7 +41,7 @@ $loginError = $loginError ?? '';
       display: flex;
       align-items: center;
       justify-content: center;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       color: #f8fafc;
       padding: 20px;
       margin: 0;
@@ -47,14 +50,14 @@ $loginError = $loginError ?? '';
 
     .gatekeeper-card {
       width: 100%;
-      max-width: 450px;
-      background: rgba(15, 23, 42, 0.88);
-      backdrop-filter: blur(18px);
-      -webkit-backdrop-filter: blur(18px);
+      max-width: 420px;
+      background: rgba(15, 23, 42, 0.9);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
       border: 1px solid rgba(255, 255, 255, 0.1);
-      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 45px rgba(5, 150, 105, 0.18);
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 45px rgba(5, 150, 105, 0.15);
       border-radius: 22px;
-      padding: 36px 32px;
+      padding: 38px 32px 34px;
       position: relative;
       overflow: hidden;
       animation: fadeIn 0.4s ease-out;
@@ -67,7 +70,7 @@ $loginError = $loginError ?? '';
       left: 0;
       right: 0;
       height: 3px;
-      background: linear-gradient(90deg, #059669, #10b981, #7c3aed, #059669);
+      background: linear-gradient(90deg, #059669, #10b981, #ef4444, #059669);
       background-size: 300% 100%;
       animation: gradientMove 6s linear infinite;
     }
@@ -103,7 +106,7 @@ $loginError = $loginError ?? '';
     }
 
     .badge-icon-wrapper span {
-      font-size: 34px;
+      font-size: 36px;
     }
 
     .gatekeeper-title {
@@ -111,30 +114,34 @@ $loginError = $loginError ?? '';
       font-weight: 700;
       letter-spacing: -0.5px;
       color: #f8fafc;
-      margin-bottom: 6px;
+      margin: 0 0 8px 0;
+      font-family: 'Plus Jakarta Sans', sans-serif;
     }
 
     .gatekeeper-subtitle {
-      font-size: 13px;
+      font-size: 12.5px;
       color: #94a3b8;
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
+      gap: 7px;
+      margin: 0;
+      line-height: 1.4;
     }
 
     .status-dot-pulse {
       width: 8px;
       height: 8px;
-      background-color: #10b981;
+      background-color: #ef4444;
       border-radius: 50%;
-      box-shadow: 0 0 8px #10b981;
-      animation: pulse 2s infinite;
+      box-shadow: 0 0 8px #ef4444;
+      animation: pulseRed 2s infinite;
+      flex-shrink: 0;
     }
 
-    @keyframes pulse {
+    @keyframes pulseRed {
       0% { opacity: 0.6; transform: scale(0.95); }
-      50% { opacity: 1; transform: scale(1.15); }
+      50% { opacity: 1; transform: scale(1.25); }
       100% { opacity: 0.6; transform: scale(0.95); }
     }
 
@@ -167,206 +174,43 @@ $loginError = $loginError ?? '';
       40%, 80% { transform: translateX(6px); }
     }
 
-    /* Primary Passkey Button */
+    /* Simple Passkey Button: key icon with "Sign in with passkey" */
     .btn-passkey-primary {
       width: 100%;
-      padding: 16px 20px;
+      padding: 14px 20px;
       background: linear-gradient(135deg, #059669, #047857);
-      border: 1px solid rgba(52, 211, 153, 0.3);
-      border-radius: 14px;
+      border: 1px solid rgba(52, 211, 153, 0.35);
+      border-radius: 12px;
       color: #ffffff;
       cursor: pointer;
       display: flex;
       align-items: center;
-      gap: 14px;
-      box-shadow: 0 8px 24px rgba(5, 150, 105, 0.35);
+      justify-content: center;
+      gap: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      box-shadow: 0 8px 24px rgba(5, 150, 105, 0.3);
       transition: all 0.2s ease;
-      text-align: left;
-      margin-bottom: 16px;
     }
 
-    .btn-passkey-primary:hover {
+    .btn-passkey-primary:hover:not(:disabled) {
       background: linear-gradient(135deg, #10b981, #059669);
-      box-shadow: 0 10px 30px rgba(16, 185, 129, 0.45);
-      transform: translateY(-2px);
+      box-shadow: 0 10px 28px rgba(16, 185, 129, 0.45);
+      transform: translateY(-1px);
     }
 
-    .btn-passkey-primary:active {
+    .btn-passkey-primary:active:not(:disabled) {
       transform: translateY(0);
     }
 
-    .passkey-icon-box {
-      width: 44px;
-      height: 44px;
-      background: rgba(255, 255, 255, 0.15);
-      border-radius: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 24px;
-      flex-shrink: 0;
+    .btn-passkey-primary:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
     }
 
-    .passkey-text-wrap {
-      flex: 1;
-    }
-
-    .passkey-btn-title {
-      font-size: 16px;
-      font-weight: 700;
-      display: block;
-      margin-bottom: 2px;
-    }
-
-    .passkey-btn-sub {
-      font-size: 11px;
-      color: #d1fae5;
-      display: block;
-    }
-
-    /* Register New Passkey Section */
-    .register-passkey-box {
-      background: rgba(2, 6, 23, 0.5);
-      border: 1px dashed rgba(255, 255, 255, 0.15);
-      border-radius: 14px;
-      padding: 14px 16px;
-      margin-bottom: 20px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-    }
-
-    .register-text {
-      font-size: 12px;
-      color: #94a3b8;
-    }
-
-    .register-text strong {
-      color: #f1f5f9;
-      display: block;
-      font-size: 13px;
-      margin-bottom: 2px;
-    }
-
-    .btn-setup-passkey {
-      background: rgba(124, 58, 237, 0.15);
-      border: 1px solid rgba(139, 92, 246, 0.35);
-      color: #c4b5fd;
-      padding: 8px 14px;
-      border-radius: 10px;
-      font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      white-space: nowrap;
-      transition: all 0.2s;
-    }
-
-    .btn-setup-passkey:hover {
-      background: rgba(124, 58, 237, 0.3);
-      color: #ffffff;
-      border-color: rgba(167, 139, 250, 0.5);
-    }
-
-    .divider {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin: 20px 0;
-      color: #64748b;
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 1px;
-      text-transform: uppercase;
-    }
-
-    .divider::before, .divider::after {
-      content: "";
-      flex: 1;
-      height: 1px;
-      background: rgba(255, 255, 255, 0.08);
-    }
-
-    .passkey-field-wrap {
-      position: relative;
-      display: flex;
-      align-items: center;
-      margin-bottom: 14px;
-    }
-
-    .passkey-field-icon {
-      position: absolute;
-      left: 14px;
-      color: #64748b;
+    .btn-passkey-primary .material-symbols-outlined {
       font-size: 20px;
-      pointer-events: none;
-    }
-
-    .passkey-input {
-      width: 100%;
-      height: 46px;
-      background: rgba(2, 6, 23, 0.6);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      border-radius: 12px;
-      padding: 0 46px 0 44px;
-      color: #ffffff;
-      font-size: 15px;
-      transition: all 0.2s ease;
-      box-sizing: border-box;
-    }
-
-    .passkey-input:focus {
-      outline: none;
-      border-color: #10b981;
-      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
-      background: rgba(2, 6, 23, 0.85);
-    }
-
-    .passkey-toggle-btn {
-      position: absolute;
-      right: 12px;
-      background: transparent;
-      border: none;
-      color: #64748b;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 4px;
-      border-radius: 6px;
-    }
-
-    .btn-pin-unlock {
-      width: 100%;
-      height: 44px;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      border-radius: 12px;
-      color: #cbd5e1;
-      font-size: 13px;
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-
-    .btn-pin-unlock:hover {
-      background: rgba(255, 255, 255, 0.1);
-      border-color: rgba(255, 255, 255, 0.2);
-      color: #ffffff;
-    }
-
-    .gatekeeper-footer {
-      text-align: center;
-      margin-top: 22px;
-      font-size: 12px;
-      color: #64748b;
     }
   </style>
 </head>
@@ -377,10 +221,10 @@ $loginError = $loginError ?? '';
       <div class="badge-icon-wrapper">
         <span class="material-symbols-outlined">fingerprint</span>
       </div>
-      <h1 class="gatekeeper-title">Command Center</h1>
+      <h1 class="gatekeeper-title">Accessing vault...</h1>
       <p class="gatekeeper-subtitle">
         <span class="status-dot-pulse"></span>
-        FIDO2 / WebAuthn Hardware Passkey Shield
+        <span>Your IP address and location are being tracked.</span>
       </p>
     </div>
 
@@ -389,25 +233,11 @@ $loginError = $loginError ?? '';
       <span id="loginAlertText"><?= htmlspecialchars($loginError) ?></span>
     </div>
 
-    <!-- PRIMARY ACTION: Sign in with Passkey -->
+    <!-- SIMPLE PASSKEY BUTTON: Just a key icon with text "Sign in with passkey" -->
     <button type="button" class="btn-passkey-primary" id="btnSignInPasskey">
-      <div class="passkey-icon-box">
-        <span class="material-symbols-outlined">fingerprint</span>
-      </div>
-      <div class="passkey-text-wrap">
-        <span class="passkey-btn-title">Sign in with Passkey</span>
-        <span class="passkey-btn-sub">Google Account &bull; iCloud Keychain &bull; Windows Hello</span>
-      </div>
-      <span class="material-symbols-outlined" style="font-size: 20px;">arrow_forward</span>
+      <span class="material-symbols-outlined">key</span>
+      <span>Sign in with passkey</span>
     </button>
-
-    <div style="font-size: 12px; color: #94a3b8; text-align: center; margin-top: 18px; line-height: 1.5;">
-      Touch your fingerprint sensor, use Face ID, or Windows Hello to verify administrator identity.
-    </div>
-
-    <div class="gatekeeper-footer">
-      Protected with Asymmetric Cryptography (ES256 / WebAuthn)
-    </div>
   </div>
 
   <script>
