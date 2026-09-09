@@ -39,6 +39,9 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
 </head>
 <body class="command-center">
 
+  <!-- Mobile Sidebar Backdrop Overlay -->
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
   <div class="admin-layout">
     
     <!-- Sidebar -->

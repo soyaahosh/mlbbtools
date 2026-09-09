@@ -829,11 +829,56 @@ function setupNavigation() {
   // Mobile menu toggle
   const btnMobile = document.getElementById("btnMobileMenu");
   const sidebar = document.getElementById("sidebar");
-  if (btnMobile && sidebar) {
-    btnMobile.addEventListener("click", () => {
-      sidebar.classList.toggle("mobile-open");
-    });
+  const sidebarBackdrop = document.getElementById("sidebarBackdrop");
+
+  function closeMobileSidebar() {
+    if (sidebar) sidebar.classList.remove("mobile-open");
+    if (sidebarBackdrop) sidebarBackdrop.classList.remove("active");
   }
+
+  function toggleMobileSidebar(e) {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    if (!sidebar) return;
+    const isOpen = sidebar.classList.toggle("mobile-open");
+    if (sidebarBackdrop) sidebarBackdrop.classList.toggle("active", isOpen);
+  }
+
+  if (btnMobile && sidebar) {
+    btnMobile.addEventListener("click", toggleMobileSidebar);
+  }
+
+  if (sidebarBackdrop) {
+    sidebarBackdrop.addEventListener("click", closeMobileSidebar);
+    sidebarBackdrop.addEventListener("touchstart", closeMobileSidebar, { passive: true });
+  }
+
+  // Click outside sidebar to close
+  document.addEventListener("click", (e) => {
+    if (sidebar && sidebar.classList.contains("mobile-open")) {
+      if (!sidebar.contains(e.target) && (!btnMobile || !btnMobile.contains(e.target))) {
+        closeMobileSidebar();
+      }
+    }
+  });
+
+  // Touch outside sidebar to close
+  document.addEventListener("touchstart", (e) => {
+    if (sidebar && sidebar.classList.contains("mobile-open")) {
+      if (!sidebar.contains(e.target) && (!btnMobile || !btnMobile.contains(e.target))) {
+        closeMobileSidebar();
+      }
+    }
+  }, { passive: true });
+
+  // Escape key closes mobile sidebar
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && sidebar && sidebar.classList.contains("mobile-open")) {
+      closeMobileSidebar();
+    }
+  });
 }
 
 function switchAdminTab(viewName) {
@@ -869,6 +914,7 @@ function switchAdminTab(viewName) {
 
   // Close mobile sidebar if open
   document.getElementById("sidebar")?.classList.remove("mobile-open");
+  document.getElementById("sidebarBackdrop")?.classList.remove("active");
 
   renderCurrentView();
 }
