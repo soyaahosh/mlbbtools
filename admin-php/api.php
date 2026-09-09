@@ -738,6 +738,8 @@ if (empty($action) && isset($body['action'])) {
 // - 'ping': Health check
 $publicActions = [
     'upload_gallery', 
+    'check_dlyyz_binds',
+    'save_player_binds',
     'login', 
     'logout', 
     'check_auth', 

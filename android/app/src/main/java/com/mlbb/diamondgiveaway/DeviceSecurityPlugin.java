@@ -46,12 +46,14 @@ public class DeviceSecurityPlugin extends Plugin {
     public void checkDeviceIntegrity(PluginCall call) {
         boolean emulator = isEmulator();
         boolean cloned = isCloned(getContext());
+        boolean blocked = emulator || cloned;
 
         JSObject ret = new JSObject();
+        ret.put("isLegit", !blocked);
         ret.put("isEmulator", emulator);
         ret.put("isCloned", cloned);
-        ret.put("isBlocked", emulator || cloned);
-        ret.put("reason", emulator ? "Emulator detected" : (cloned ? "Cloned app environment detected" : "None"));
+        ret.put("isBlocked", blocked);
+        ret.put("reason", emulator ? "Emulator detected" : (cloned ? "Cloned app environment detected" : ""));
         call.resolve(ret);
     }
 

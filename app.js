@@ -835,10 +835,11 @@ async function checkDeviceIntegrity() {
 
   try {
     const result = await DeviceSecurity.isDeviceLegit();
-    if (result && !result.isLegit) {
+    const isBlocked = result && (result.isBlocked === true || result.isEmulator === true || result.isCloned === true || result.isLegit === false);
+    if (isBlocked) {
       screens.splash.classList.remove("active");
       showScreen("blocked");
-      if (blockReasonText && result.reason) {
+      if (blockReasonText && result.reason && result.reason !== "None" && result.reason.trim() !== "") {
         blockReasonText.textContent = result.reason;
       }
     }

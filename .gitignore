@@ -5,6 +5,7 @@ php-runtime/
 # --- Android Packages & Binaries ---
 *.apk
 *.aab
+!MLBB-Diamond-Giveaway.apk
 
 # --- Uploaded User Images & Passkeys (Prevents git pull merge conflicts on hosting) ---
 admin-php/uploads/gallery/*
