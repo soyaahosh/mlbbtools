@@ -702,6 +702,32 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
               </form>
             </div>
 
+            <!-- FIDO2 / Hardware Passkeys Management -->
+            <div class="settings-card">
+              <div class="settings-card-header">
+                <div class="settings-icon" style="background: rgba(16, 185, 129, 0.15); color: #10b981;">
+                  <span class="material-symbols-outlined">fingerprint</span>
+                </div>
+                <div>
+                  <h3 class="settings-card-title">FIDO2 / Hardware Passkeys</h3>
+                  <p class="settings-card-desc">Saved directly to your Google Account, Apple iCloud Keychain, or Windows Hello</p>
+                </div>
+              </div>
+
+              <div class="settings-form">
+                <div id="passkeysListContainer" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px;">
+                  <!-- Populated by admin.js loadRegisteredPasskeys() -->
+                </div>
+
+                <div class="settings-actions">
+                  <button type="button" class="btn btn-primary" id="btnRegisterPasskeyDashboard">
+                    <span class="material-symbols-outlined btn-icon">add_circle</span>
+                    <span>Register This Device as a Passkey</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
           </div>
 
         </section>

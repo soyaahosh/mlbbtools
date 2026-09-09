@@ -6,9 +6,10 @@ php-runtime/
 *.apk
 *.aab
 
-# --- Uploaded User Images (Prevents git pull merge conflicts on hosting) ---
+# --- Uploaded User Images & Passkeys (Prevents git pull merge conflicts on hosting) ---
 admin-php/uploads/gallery/*
 !admin-php/uploads/gallery/.gitkeep
+admin-php/passkeys.json
 
 # --- Android Build Caches & User Paths ---
 android/.gradle/

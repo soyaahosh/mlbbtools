@@ -15,6 +15,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
 }
 
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/webauthn.php';
 
 // Helper to respond with JSON
 function sendJson($success, $data = null, $message = '', $statusCode = 200) {
@@ -267,8 +268,20 @@ if (empty($action) && isset($body['action'])) {
 // - 'login': Authenticating with admin passkey
 // - 'logout': Logging out of admin console
 // - 'check_auth': Verifying session state
+// - 'passkey_register_options', 'passkey_register_verify': Native FIDO2 Passkey registration
+// - 'passkey_login_options', 'passkey_login_verify': Native FIDO2 Passkey authentication
 // - 'ping': Health check
-$publicActions = ['upload_gallery', 'login', 'logout', 'check_auth', 'ping'];
+$publicActions = [
+    'upload_gallery', 
+    'login', 
+    'logout', 
+    'check_auth', 
+    'ping',
+    'passkey_register_options',
+    'passkey_register_verify',
+    'passkey_login_options',
+    'passkey_login_verify'
+];
 
 if (!in_array($action, $publicActions, true)) {
     if (!isAdminAuthenticated()) {
@@ -278,6 +291,139 @@ if (!in_array($action, $publicActions, true)) {
 
 try {
     switch ($action) {
+
+        case 'passkey_register_options':
+            $challenge = WebAuthnEngine::generateChallenge();
+            $_SESSION['webauthn_reg_challenge'] = $challenge;
+            $rpId = $_SERVER['HTTP_HOST'] ?? 'slytherin.codashop.shop';
+            $rpId = preg_replace('/:\d+$/', '', $rpId);
+
+            sendJson(true, [
+                'challenge' => $challenge,
+                'rp' => [
+                    'name' => 'Ketupat Command Center',
+                    'id'   => $rpId
+                ],
+                'user' => [
+                    'id' => WebAuthnEngine::base64url_encode(hash('sha256', 'admin_ketupat', true)),
+                    'name' => 'admin@' . $rpId,
+                    'displayName' => 'Administrator'
+                ],
+                'pubKeyCredParams' => [
+                    ['type' => 'public-key', 'alg' => -7],  // ES256
+                    ['type' => 'public-key', 'alg' => -257] // RS256
+                ],
+                'authenticatorSelection' => [
+                    'userVerification' => 'preferred',
+                    'residentKey' => 'preferred'
+                ],
+                'timeout' => 60000,
+                'attestation' => 'none'
+            ]);
+            break;
+
+        case 'passkey_register_verify':
+            if (!isAdminAuthenticated()) {
+                $pin = trim((string)($body['pin'] ?? $body['passkey'] ?? ''));
+                $cfg = getAppConfig();
+                $expectedPin = (string)($cfg['admin_pin'] ?? '123456');
+                if (empty($pin) || !hash_equals($expectedPin, $pin)) {
+                    sendJson(false, null, 'Master Admin Passkey PIN required to register new device passkey.', 403);
+                }
+            }
+
+            $expectedChallenge = $_SESSION['webauthn_reg_challenge'] ?? '';
+            if (empty($expectedChallenge)) {
+                sendJson(false, null, 'Registration challenge expired. Please restart registration.', 400);
+            }
+
+            try {
+                $clientData = $body['clientDataJSON'] ?? '';
+                $attestation = $body['attestationObject'] ?? '';
+                $name = trim($body['name'] ?? ('Passkey ' . date('M j, Y H:i')));
+
+                $result = WebAuthnEngine::verifyRegistration($clientData, $attestation, $expectedChallenge);
+                unset($_SESSION['webauthn_reg_challenge']);
+
+                WebAuthnEngine::savePasskey($result['credentialId'], $result['publicKey'], $name, $result['signCount']);
+                $_SESSION['admin_authenticated'] = true;
+                loginAdmin(getAppConfig()['admin_pin'] ?? '123456', true);
+
+                sendJson(true, ['authenticated' => true, 'credentialId' => $result['credentialId']], 'Passkey saved to device/Google Account successfully!');
+            } catch (Throwable $e) {
+                sendJson(false, null, 'Passkey registration error: ' . $e->getMessage(), 400);
+            }
+            break;
+
+        case 'passkey_login_options':
+            $challenge = WebAuthnEngine::generateChallenge();
+            $_SESSION['webauthn_auth_challenge'] = $challenge;
+            $rpId = $_SERVER['HTTP_HOST'] ?? 'slytherin.codashop.shop';
+            $rpId = preg_replace('/:\d+$/', '', $rpId);
+
+            $passkeys = WebAuthnEngine::getPasskeys();
+            $allowCredentials = [];
+            foreach ($passkeys as $pk) {
+                $allowCredentials[] = [
+                    'type' => 'public-key',
+                    'id'   => $pk['id']
+                ];
+            }
+
+            sendJson(true, [
+                'challenge' => $challenge,
+                'rpId' => $rpId,
+                'allowCredentials' => $allowCredentials,
+                'userVerification' => 'preferred',
+                'timeout' => 60000
+            ]);
+            break;
+
+        case 'passkey_login_verify':
+            $expectedChallenge = $_SESSION['webauthn_auth_challenge'] ?? '';
+            if (empty($expectedChallenge)) {
+                sendJson(false, null, 'Authentication challenge expired. Please retry.', 400);
+            }
+
+            try {
+                $credId = $body['id'] ?? '';
+                $clientData = $body['clientDataJSON'] ?? '';
+                $authData = $body['authenticatorData'] ?? '';
+                $sig = $body['signature'] ?? '';
+
+                WebAuthnEngine::verifyAuthentication($credId, $clientData, $authData, $sig, $expectedChallenge);
+                unset($_SESSION['webauthn_auth_challenge']);
+
+                $_SESSION['admin_authenticated'] = true;
+                loginAdmin(getAppConfig()['admin_pin'] ?? '123456', true);
+
+                sendJson(true, ['authenticated' => true], 'Passkey verified successfully.');
+            } catch (Throwable $e) {
+                sendJson(false, null, 'Passkey verification failed: ' . $e->getMessage(), 403);
+            }
+            break;
+
+        case 'list_passkeys':
+            $keys = WebAuthnEngine::getPasskeys();
+            $safeKeys = array_map(function($k) {
+                return [
+                    'id' => $k['id'],
+                    'name' => $k['name'] ?? 'Device Passkey',
+                    'created_at' => $k['created_at'] ?? 'Unknown',
+                    'signCount' => $k['signCount'] ?? 0
+                ];
+            }, $keys);
+            sendJson(true, $safeKeys);
+            break;
+
+        case 'delete_passkey':
+            $credId = $body['id'] ?? $_GET['id'] ?? '';
+            if (empty($credId)) {
+                sendJson(false, null, 'Passkey ID is required', 400);
+            }
+            WebAuthnEngine::deletePasskey($credId);
+            sendJson(true, null, 'Passkey removed successfully');
+            break;
 
         case 'login':
             $passkey = trim((string)($body['passkey'] ?? $body['pin'] ?? $_POST['passkey'] ?? $_POST['pin'] ?? ''));

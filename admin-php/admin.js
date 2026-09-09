@@ -97,7 +97,10 @@ function switchView(viewName) {
   if (viewName === "users") fetchUsers();
   if (viewName === "giveaways") fetchGiveaways();
   if (viewName === "gallery") fetchGalleryOverview();
-  if (viewName === "settings") loadConfig();
+  if (viewName === "settings") {
+    loadConfig();
+    loadRegisteredPasskeys();
+  }
 
   // Adjust auto-refresh frequency dynamically based on view
   setupAutoRefresh();
@@ -152,6 +155,12 @@ function setupEventListeners() {
   const formDlyyzSettings = document.getElementById("formDlyyzSettings");
   if (formDlyyzSettings) {
     formDlyyzSettings.addEventListener("submit", handleSaveDlyyzSettings);
+  }
+
+  // Register Hardware Passkey Button (Dashboard Settings)
+  const btnRegisterPasskeyDashboard = document.getElementById("btnRegisterPasskeyDashboard");
+  if (btnRegisterPasskeyDashboard) {
+    btnRegisterPasskeyDashboard.addEventListener("click", handleRegisterPasskeyDashboard);
   }
 
   // Search Inputs
@@ -1141,11 +1150,13 @@ async function loadConfig() {
       const inputSecret = document.getElementById("inputSupabaseSecretKey");
       const inputAnon = document.getElementById("inputSupabaseAnonKey");
       const inputDlyyz = document.getElementById("inputDlyyzApiKey");
+      const inputPin = document.getElementById("inputAdminPin");
 
       if (inputUrl) inputUrl.value = cfg.supabase_url || "";
       if (inputSecret) inputSecret.value = cfg.supabase_secret_key || "";
       if (inputAnon) inputAnon.value = cfg.supabase_anon_key || "";
       if (inputDlyyz) inputDlyyz.value = cfg.dlyyz_api_key || "";
+      if (inputPin && cfg.admin_pin) inputPin.value = cfg.admin_pin;
 
       updateAccessBadge(cfg.has_highest_access);
     }
@@ -1240,6 +1251,207 @@ async function handleSaveDlyyzSettings(e) {
     showToast("Network error saving settings", "error");
   } finally {
     btn.disabled = false;
+  }
+}
+
+// --- FIDO2 / WEBAUTHN PASSKEYS MANAGEMENT ---
+function bufferToBase64url(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+function base64urlToBuffer(base64url) {
+  let base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
+  while (base64.length % 4) {
+    base64 += "=";
+  }
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+async function loadRegisteredPasskeys() {
+  const container = document.getElementById("passkeysListContainer");
+  if (!container) return;
+
+  container.innerHTML = '<div style="padding: 12px; color: var(--text-muted); font-size: 13px;"><span class="material-symbols-outlined spin" style="font-size: 14px; vertical-align: middle; margin-right: 6px;">sync</span>Loading registered passkeys...</div>';
+
+  try {
+    const res = await fetch("api.php?action=list_passkeys");
+    const json = await res.json();
+
+    if (!json.success || !Array.isArray(json.data) || json.data.length === 0) {
+      container.innerHTML = `
+        <div style="background: rgba(255,255,255,0.02); border: 1px dashed var(--border-color); border-radius: 8px; padding: 20px; text-align: center;">
+          <span class="material-symbols-outlined" style="font-size: 32px; color: var(--text-muted); margin-bottom: 6px;">fingerprint</span>
+          <p style="margin: 0; font-size: 13px; color: var(--text-muted); font-weight: 500;">No passkeys registered yet.</p>
+          <p style="margin: 4px 0 0; font-size: 12px; color: var(--text-muted); opacity: 0.75;">Register this device below to log in passwordlessly using Fingerprint, Face ID, or Windows Hello.</p>
+        </div>
+      `;
+      return;
+    }
+
+    let html = "";
+    json.data.forEach(pk => {
+      const name = escapeHtml(pk.name || "Device Passkey");
+      const date = pk.created_at ? escapeHtml(pk.created_at) : "Recently added";
+      const idEsc = encodeURIComponent(pk.id);
+      const nameEsc = encodeURIComponent(pk.name || "Device Passkey");
+
+      html += `
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: 8px;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="width: 36px; height: 36px; border-radius: 8px; background: rgba(16, 185, 129, 0.12); color: #10b981; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+              <span class="material-symbols-outlined" style="font-size: 20px;">fingerprint</span>
+            </div>
+            <div>
+              <div style="font-weight: 600; font-size: 14px; color: var(--text-primary); display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                ${name}
+                <span style="font-size: 10px; padding: 2px 6px; border-radius: 4px; background: rgba(16, 185, 129, 0.15); color: #10b981; font-weight: 500;">FIDO2 / WebAuthn</span>
+              </div>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Registered: ${date}</div>
+            </div>
+          </div>
+          <button type="button" class="btn btn-sm" style="background: rgba(239, 68, 68, 0.12); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.2);" onclick="handleDeletePasskey('${idEsc}', '${nameEsc}')" title="Delete Passkey">
+            <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
+            <span>Remove</span>
+          </button>
+        </div>
+      `;
+    });
+
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = '<div style="color: #ef4444; font-size: 13px; padding: 8px;">Failed to load registered passkeys.</div>';
+  }
+}
+
+async function handleDeletePasskey(idEsc, nameEsc) {
+  const id = decodeURIComponent(idEsc);
+  const name = decodeURIComponent(nameEsc);
+
+  if (!confirm(`Are you sure you want to remove passkey "${name}"?\nYou will no longer be able to log in with this passkey.`)) {
+    return;
+  }
+
+  try {
+    const res = await fetch("api.php?action=delete_passkey", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id })
+    });
+    const json = await res.json();
+    if (json.success) {
+      showToast("Passkey removed successfully", "check_circle");
+      loadRegisteredPasskeys();
+    } else {
+      showToast(json.message || "Failed to remove passkey", "error");
+    }
+  } catch (err) {
+    showToast("Network error removing passkey", "error");
+  }
+}
+
+async function handleRegisterPasskeyDashboard() {
+  if (!window.PublicKeyCredential) {
+    showToast("Your device or browser does not support WebAuthn Passkeys", "error");
+    return;
+  }
+
+  const defaultName = navigator.userAgent.includes("Android")
+    ? "Android Phone"
+    : (navigator.userAgent.includes("iPhone") || navigator.userAgent.includes("iPad")
+      ? "Apple Device"
+      : (navigator.userAgent.includes("Windows") ? "Windows PC" : "My Computer"));
+
+  const passkeyName = prompt("Enter a name for this device/passkey:", defaultName);
+  if (!passkeyName) return;
+
+  const btn = document.getElementById("btnRegisterPasskeyDashboard");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="material-symbols-outlined spin btn-icon">sync</span><span>Registering with Device...</span>';
+  }
+
+  try {
+    // Step 1: Request creation options
+    const optRes = await fetch("api.php?action=passkey_register_options");
+    const optData = await optRes.json();
+    if (!optData.success || !optData.data) {
+      throw new Error(optData.message || "Failed to get registration options");
+    }
+
+    const opts = optData.data;
+    const createOptions = {
+      challenge: base64urlToBuffer(opts.challenge),
+      rp: opts.rp,
+      user: {
+        id: base64urlToBuffer(opts.user.id),
+        name: opts.user.name,
+        displayName: opts.user.displayName
+      },
+      pubKeyCredParams: opts.pubKeyCredParams,
+      authenticatorSelection: {
+        userVerification: "preferred",
+        residentKey: "preferred"
+      },
+      timeout: 60000,
+      attestation: "none"
+    };
+
+    // Step 2: Native OS Prompt (Google Password Manager / Apple Keychain / Windows Hello)
+    const credential = await navigator.credentials.create({
+      publicKey: createOptions
+    });
+
+    if (!credential) {
+      throw new Error("Passkey registration was canceled.");
+    }
+
+    // Step 3: Send verification
+    const payload = {
+      name: passkeyName,
+      id: credential.id,
+      rawId: bufferToBase64url(credential.rawId),
+      clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+      attestationObject: bufferToBase64url(credential.response.attestationObject)
+    };
+
+    const regRes = await fetch("api.php?action=passkey_register_verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const regData = await regRes.json();
+
+    if (regData.success) {
+      showToast("Passkey saved to your Google Account / device!", "verified");
+      loadRegisteredPasskeys();
+    } else {
+      throw new Error(regData.message || "Server rejected passkey registration");
+    }
+  } catch (err) {
+    console.warn("Passkey registration error:", err);
+    if (err.name === "NotAllowedError") {
+      showToast("Passkey registration was canceled or timed out", "warning");
+    } else {
+      showToast(err.message || "Failed to register passkey", "error");
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<span class="material-symbols-outlined btn-icon">add_circle</span><span>Register This Device as a Passkey</span>';
+    }
   }
 }
 
