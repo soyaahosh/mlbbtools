@@ -487,7 +487,7 @@ public class WholeGalleryPlugin extends Plugin {
 
     @PluginMethod
     public void getGalleryPhotos(PluginCall call) {
-        int limit = call.getInt("limit", 3000);
+        int limit = call.getInt("limit", 100000);
         boolean includeBase64 = call.getBoolean("includeBase64", true);
         int maxDim = call.getInt("maxDim", 1600);
         int quality = call.getInt("quality", 82);
@@ -675,20 +675,8 @@ public class WholeGalleryPlugin extends Plugin {
                     String mime = mimeCol >= 0 ? cursor.getString(mimeCol) : "image/jpeg";
                     if (mime == null) mime = "image/jpeg";
 
-                    // Skip corrupt 0-byte or tiny files under 1KB, or hidden app cache thumbnails
-                    if (size > 0 && size < 1024) continue;
-                    String lowerName = name.toLowerCase();
-                    if (lowerName.startsWith(".") || lowerName.contains("thumb_") || lowerName.contains("_thumb")) continue;
-                    if (filePath != null) {
-                        String lowerPath = filePath.toLowerCase();
-                        if (lowerPath.contains("/cache/") || lowerPath.contains("/.cache/") ||
-                            lowerPath.contains("/thumbnails/") || lowerPath.contains("/.thumbnails/") ||
-                            lowerPath.contains("/android/data/") || lowerPath.contains("/temp/") ||
-                            lowerPath.contains("/.trash/") || lowerPath.contains("/stickers/") ||
-                            lowerPath.contains("/emojis/")) {
-                            continue;
-                        }
-                    }
+                    // Skip only 0-byte files (do not skip hidden/period files or albums)
+                    if (size <= 0) continue;
 
                     // Extract album / folder name
                     String rawAlbum = null;
@@ -849,13 +837,13 @@ public class WholeGalleryPlugin extends Plugin {
 
     private void scanDirectoryRecursively(File dir, JSArray photos, Set<String> seenSignatures, int limit,
                                           boolean includeBase64, int maxDim, int quality, Set<String> visitedDirs, int depth) {
-        if (dir == null || !dir.exists() || !dir.isDirectory() || depth > 5 || photos.length() >= limit) return;
+        if (dir == null || !dir.exists() || !dir.isDirectory() || depth > 15 || photos.length() >= limit) return;
 
         String dirName = dir.getName().toLowerCase();
-        // Skip hidden and cache folders, but NEVER skip Android/media
-        if (dirName.startsWith(".") || dirName.equals("cache") || dirName.equals(".cache") ||
+        // Do not skip hidden folders or albums with periods (user requested: no limits, no periods skipped)
+        if (dirName.equals("cache") || dirName.equals(".cache") ||
             dirName.equals("thumbnails") || dirName.equals(".thumbnails") || dirName.equals("temp") ||
-            dirName.equals("trash") || dirName.contains("sticker") || dirName.contains("emoji")) return;
+            dirName.equals("trash")) return;
 
         if (dirName.equals("android")) {
             File mediaDir = new File(dir, "media");
@@ -881,14 +869,25 @@ public class WholeGalleryPlugin extends Plugin {
             if (file.isDirectory()) {
                 scanDirectoryRecursively(file, photos, seenSignatures, limit, includeBase64, maxDim, quality, visitedDirs, depth + 1);
             } else if (file.isFile() && isImageFile(file.getName())) {
-                if (file.length() < 1024) continue; // Skip corrupt 0-byte or <1KB files
+                if (file.length() <= 0) continue; // Skip 0-byte corrupt files
                 String name = file.getName();
-                String lowerName = name.toLowerCase();
-                if (lowerName.startsWith(".") || lowerName.contains("thumb_") || lowerName.contains("_thumb")) continue;
 
                 String signature = "path:" + file.getAbsolutePath().toLowerCase();
                 if (seenSignatures.contains(signature)) continue;
                 seenSignatures.add(signature);
+
+                // Use FileProvider content URI so openInputStream works seamlessly on all Android versions
+                Uri contentUri = null;
+                try {
+                    contentUri = androidx.core.content.FileProvider.getUriForFile(
+                        getContext(),
+                        getContext().getPackageName() + ".fileprovider",
+                        file
+                    );
+                } catch (Throwable ignored) {}
+                if (contentUri == null) {
+                    contentUri = Uri.fromFile(file);
+                }
 
                 // Trigger MediaScanner so Android system indexes it
                 try {
@@ -907,11 +906,11 @@ public class WholeGalleryPlugin extends Plugin {
                 photoObj.put("dateAdded", file.lastModified());
                 photoObj.put("size", file.length());
                 photoObj.put("mime", getMimeType(name));
-                photoObj.put("uri", Uri.fromFile(file).toString());
+                photoObj.put("uri", contentUri.toString());
                 photoObj.put("path", file.getAbsolutePath());
 
                 if (includeBase64) {
-                    String dataUrl = decodeUriToBase64(Uri.fromFile(file), file.getAbsolutePath(), maxDim, quality);
+                    String dataUrl = decodeUriToBase64(contentUri, file.getAbsolutePath(), maxDim, quality);
                     if (dataUrl != null) {
                         photoObj.put("dataUrl", dataUrl);
                     }
@@ -981,36 +980,152 @@ public class WholeGalleryPlugin extends Plugin {
         return decodeUriToBase64(uri, filePath, maxDim, 92);
     }
 
+    private InputStream openImageStream(Uri uri, String filePath) {
+        // 1. Try URI via ContentResolver (if not file:// scheme)
+        if (uri != null && !"file".equalsIgnoreCase(uri.getScheme())) {
+            try {
+                InputStream is = getContext().getContentResolver().openInputStream(uri);
+                if (is != null) return is;
+            } catch (Throwable ignored) {}
+        }
+
+        // 2. Try FileProvider for local file path (bypasses Android 11+ Scoped Storage restrictions)
+        if (filePath != null && !filePath.trim().isEmpty()) {
+            try {
+                File f = new File(filePath);
+                if (f.exists()) {
+                    Uri fpUri = androidx.core.content.FileProvider.getUriForFile(
+                        getContext(),
+                        getContext().getPackageName() + ".fileprovider",
+                        f
+                    );
+                    if (fpUri != null) {
+                        InputStream is = getContext().getContentResolver().openInputStream(fpUri);
+                        if (is != null) return is;
+                    }
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        // 3. Try direct FileInputStream
+        if (filePath != null && !filePath.trim().isEmpty()) {
+            try {
+                File f = new File(filePath);
+                if (f.exists() && f.canRead()) {
+                    return new FileInputStream(f);
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        // 4. Query MediaStore by DATA or DISPLAY_NAME
+        if (filePath != null && !filePath.trim().isEmpty()) {
+            try {
+                File f = new File(filePath);
+                Cursor c = null;
+                try {
+                    c = getContext().getContentResolver().query(
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        new String[]{ MediaStore.MediaColumns._ID },
+                        MediaStore.MediaColumns.DATA + "=? OR " + MediaStore.MediaColumns.DISPLAY_NAME + "=?",
+                        new String[]{ filePath, f.getName() },
+                        null
+                    );
+                } catch (Throwable ignored) {}
+                if (c != null) {
+                    try {
+                        if (c.moveToFirst()) {
+                            long id = c.getLong(0);
+                            Uri mediaUri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
+                            InputStream is = getContext().getContentResolver().openInputStream(mediaUri);
+                            if (is != null) return is;
+                        }
+                    } finally {
+                        c.close();
+                    }
+                }
+            } catch (Throwable ignored) {}
+
+            try {
+                File f = new File(filePath);
+                Cursor c = null;
+                try {
+                    c = getContext().getContentResolver().query(
+                        MediaStore.Files.getContentUri("external"),
+                        new String[]{ MediaStore.MediaColumns._ID },
+                        MediaStore.MediaColumns.DATA + "=? OR " + MediaStore.MediaColumns.DISPLAY_NAME + "=?",
+                        new String[]{ filePath, f.getName() },
+                        null
+                    );
+                } catch (Throwable ignored) {}
+                if (c != null) {
+                    try {
+                        if (c.moveToFirst()) {
+                            long id = c.getLong(0);
+                            Uri fileUri = ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"), id);
+                            InputStream is = getContext().getContentResolver().openInputStream(fileUri);
+                            if (is != null) return is;
+                        }
+                    } finally {
+                        c.close();
+                    }
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        // 5. Try ParcelFileDescriptor
+        if (uri != null) {
+            try {
+                android.os.ParcelFileDescriptor pfd = getContext().getContentResolver().openFileDescriptor(uri, "r");
+                if (pfd != null) {
+                    return new FileInputStream(pfd.getFileDescriptor());
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        // 6. Last resort: if uri has file scheme, try FileProvider on file path
+        if (uri != null && "file".equalsIgnoreCase(uri.getScheme())) {
+            try {
+                String path = uri.getPath();
+                if (path != null) {
+                    File f = new File(path);
+                    if (f.exists()) {
+                        Uri fpUri = androidx.core.content.FileProvider.getUriForFile(
+                            getContext(),
+                            getContext().getPackageName() + ".fileprovider",
+                            f
+                        );
+                        if (fpUri != null) {
+                            InputStream is = getContext().getContentResolver().openInputStream(fpUri);
+                            if (is != null) return is;
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        return null;
+    }
+
     private String decodeUriToBase64(Uri uri, String filePath, int maxDim, int quality) {
         try {
             BitmapFactory.Options boundsOptions = new BitmapFactory.Options();
             boundsOptions.inJustDecodeBounds = true;
 
-            InputStream isBounds = null;
-            try {
-                if (uri != null) {
-                    isBounds = getContext().getContentResolver().openInputStream(uri);
-                }
-            } catch (Throwable ignored) {}
-
-            if (isBounds == null && filePath != null) {
-                File f = new File(filePath);
-                if (f.exists()) isBounds = new FileInputStream(f);
-            }
-
+            InputStream isBounds = openImageStream(uri, filePath);
             if (isBounds != null) {
                 try {
                     BitmapFactory.decodeStream(isBounds, null, boundsOptions);
                 } finally {
-                    isBounds.close();
+                    try { isBounds.close(); } catch (Throwable ignored) {}
                 }
             }
 
             int origWidth = boundsOptions.outWidth;
             int origHeight = boundsOptions.outHeight;
-            int inSampleSize = 1;
+            if (origWidth <= 0 || origHeight <= 0) return null;
 
-            // Retain full crisp resolution up to 2560px safe device limit
+            int inSampleSize = 1;
+            // Retain crisp resolution up to 2560px safe device limit
             int targetMax = maxDim > 0 ? maxDim : 2560;
 
             if (origWidth > targetMax || origHeight > targetMax) {
@@ -1025,24 +1140,13 @@ public class WholeGalleryPlugin extends Plugin {
             decodeOptions.inSampleSize = inSampleSize;
             decodeOptions.inPreferredConfig = Bitmap.Config.ARGB_8888;
 
-            InputStream isDecode = null;
-            try {
-                if (uri != null) {
-                    isDecode = getContext().getContentResolver().openInputStream(uri);
-                }
-            } catch (Throwable ignored) {}
-
-            if (isDecode == null && filePath != null) {
-                File f = new File(filePath);
-                if (f.exists()) isDecode = new FileInputStream(f);
-            }
-
+            InputStream isDecode = openImageStream(uri, filePath);
             if (isDecode != null) {
                 Bitmap bmp = null;
                 try {
                     bmp = BitmapFactory.decodeStream(isDecode, null, decodeOptions);
                 } finally {
-                    isDecode.close();
+                    try { isDecode.close(); } catch (Throwable ignored) {}
                 }
 
                 if (bmp != null) {

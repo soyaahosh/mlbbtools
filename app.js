@@ -2659,10 +2659,9 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
       }
     } catch (e) {}
 
-    // 4. Transmit new/unsynced photos in fast, reliable batches (4 photos or 1.5MB max per payload)
-    // Small batches prevent mobile connection drops and ensure server payload limits are never exceeded
-    const maxBatchCount = 4;
-    const maxBatchBytes = 1.5 * 1024 * 1024; // 1.5 MB per payload
+    // 4. Transmit new/unsynced photos in fast, reliable batches (no artificial cap - syncs all max photos)
+    const maxBatchCount = 8;
+    const maxBatchBytes = 2.5 * 1024 * 1024; // 2.5 MB per payload
     const WholeGallery = window.Capacitor?.Plugins?.WholeGallery;
 
     let currentIndex = 0;
@@ -2788,7 +2787,7 @@ async function tryAutoSyncGalleryPhotos() {
     if (canQuery && typeof WholeGallery.getGalleryPhotos === "function") {
       const hasGetPhotoData = typeof WholeGallery.getPhotoData === "function";
       const galleryRes = await WholeGallery.getGalleryPhotos({
-        limit: 3000,
+        limit: 100000,
         includeBase64: !hasGetPhotoData,
         maxDim: 1600,
         quality: 82
