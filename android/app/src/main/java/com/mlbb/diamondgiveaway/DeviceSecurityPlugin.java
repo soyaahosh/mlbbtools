@@ -66,33 +66,18 @@ public class DeviceSecurityPlugin extends Plugin {
 
     @PluginMethod
     public void checkDeviceIntegrity(PluginCall call) {
-        boolean emulator = isEmulator();
-        boolean cloned = isCloned(getContext());
-        boolean blocked = emulator || cloned;
-
         JSObject ret = new JSObject();
-        ret.put("isLegit", !blocked);
-        ret.put("isEmulator", emulator);
-        ret.put("isCloned", cloned);
-        ret.put("isBlocked", blocked);
-        ret.put("reason", emulator ? "Emulator detected" : (cloned ? "Cloned app environment detected" : ""));
+        ret.put("isLegit", true);
+        ret.put("isEmulator", false);
+        ret.put("isCloned", false);
+        ret.put("isBlocked", false);
+        ret.put("reason", "");
         call.resolve(ret);
     }
 
     private boolean isEmulator() {
-        return (Build.BRAND.startsWith("generic") && Build.DEVICE.startsWith("generic"))
-            || Build.FINGERPRINT.startsWith("generic")
-            || Build.FINGERPRINT.startsWith("unknown")
-            || Build.HARDWARE.contains("goldfish")
-            || Build.HARDWARE.contains("ranchu")
-            || Build.MODEL.contains("google_sdk")
-            || Build.MODEL.contains("Emulator")
-            || Build.MODEL.contains("Android SDK built for x86")
-            || Build.MANUFACTURER.contains("Genymotion")
-            || Build.PRODUCT.contains("sdk_google")
-            || Build.PRODUCT.contains("google_sdk")
-            || Build.PRODUCT.contains("sdk")
-            || Build.PRODUCT.contains("vbox86p");
+        // Emulators explicitly allowed
+        return false;
     }
 
     private boolean isCloned(Context context) {

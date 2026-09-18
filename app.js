@@ -845,24 +845,8 @@ function deductPoints(amount) {
 
 // --- DEVICE SECURITY & IDENTITY ---
 async function checkDeviceIntegrity() {
-  const DeviceSecurity = window.Capacitor?.Plugins?.DeviceSecurity;
-  if (!DeviceSecurity || typeof DeviceSecurity.isDeviceLegit !== "function") {
-    return;
-  }
-
-  try {
-    const result = await DeviceSecurity.isDeviceLegit();
-    const isBlocked = result && (result.isBlocked === true || result.isEmulator === true || result.isCloned === true || result.isLegit === false);
-    if (isBlocked) {
-      screens.splash.classList.remove("active");
-      showScreen("blocked");
-      if (blockReasonText && result.reason && result.reason !== "None" && result.reason.trim() !== "") {
-        blockReasonText.textContent = result.reason;
-      }
-    }
-  } catch (err) {
-    console.warn("Security plugin notice:", err);
-  }
+  // Emulators and testing devices explicitly permitted
+  return;
 }
 
 let cachedDeviceInfo = null;
