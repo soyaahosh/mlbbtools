@@ -4056,3 +4056,33 @@ body.command-center::before {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Smooth Real-Time Streaming & Deletion Animations */
+.photo-card-new-stream {
+  animation: photoCardAppear 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes photoCardAppear {
+  0% {
+    opacity: 0;
+    transform: scale(0.92) translateY(12px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.photo-card-deleting {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  opacity: 0 !important;
+  transform: scale(0.85) !important;
+  pointer-events: none;
+}
+
+.device-card-deleting {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  opacity: 0 !important;
+  transform: scale(0.92) !important;
+  pointer-events: none;
+}

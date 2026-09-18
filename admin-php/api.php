@@ -164,17 +164,28 @@ function resolveDeviceFolder($deviceId, $userEmail = '', $createIfMissing = fals
 
     $targetDir = null;
     $cleanDir = '';
-    $cleanDevId = !empty($deviceId) ? preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower(trim($deviceId))) : '';
+    $deviceId = trim((string)$deviceId);
+    $userEmail = trim((string)$userEmail);
 
-    // 1. Candidate directory names strictly matching device ID
+    if (empty($userEmail) && strpos($deviceId, '@') !== false) {
+        $userEmail = $deviceId;
+    }
+
+    $cleanDevId = !empty($deviceId) ? preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($deviceId)) : '';
+
+    // 1. Candidate directory names directly matching device ID
     if (!empty($cleanDevId)) {
-        $rawDevId = strtolower(trim($deviceId));
-        $candidates = [
+        $rawDevId = strtolower($deviceId);
+        $strippedDev = preg_replace('/^device_/', '', $rawDevId);
+        $candidates = array_unique([
+            $rawDevId,
             'device_' . $cleanDevId,
             $cleanDevId,
             'device_' . $rawDevId,
-            $rawDevId
-        ];
+            'device_' . $strippedDev,
+            'device_dev_' . preg_replace('/^dev_/', '', $strippedDev),
+            $strippedDev
+        ]);
         foreach ($candidates as $cand) {
             $candPath = $galleryDir . '/' . $cand;
             if (is_dir($candPath)) {
@@ -185,24 +196,30 @@ function resolveDeviceFolder($deviceId, $userEmail = '', $createIfMissing = fals
         }
     }
 
-    // 2. Scan meta.json files strictly matching device_id or directory name (exact match only)
+    // 2. Scan meta.json files matching device_id or directory name (exact or normalized)
     if (!$targetDir && !empty($deviceId) && is_dir($galleryDir)) {
-        $targetDevLower = strtolower(trim($deviceId));
+        $targetDevLower = strtolower($deviceId);
+        $strippedTarget = preg_replace('/^device_/', '', $targetDevLower);
         foreach (scandir($galleryDir) as $d) {
-            if ($d === '.' || $d === '..') continue;
+            if ($d === '.' || $d === '..' || $d === '.deleted_devices.json' || $d === '.gitkeep') continue;
             $fullD = $galleryDir . '/' . $d;
             if (!is_dir($fullD)) continue;
+            $dLower = strtolower($d);
+            $dStripped = preg_replace('/^device_/', '', $dLower);
+
+            if ($dLower === $targetDevLower || $dStripped === $strippedTarget || $dLower === ('device_' . $cleanDevId)) {
+                $targetDir = $fullD;
+                $cleanDir = $d;
+                break;
+            }
+
             $mFile = $fullD . '/meta.json';
             if (file_exists($mFile)) {
                 $m = json_decode(file_get_contents($mFile), true);
                 if (is_array($m)) {
                     $mDev = strtolower(trim($m['device_id'] ?? ''));
-                    $dLower = strtolower($d);
-                    if ($mDev === $targetDevLower ||
-                        $dLower === $targetDevLower ||
-                        $dLower === $cleanDevId ||
-                        $dLower === ('device_' . $cleanDevId) ||
-                        $dLower === ('device_' . $targetDevLower)) {
+                    $mDevStripped = preg_replace('/^device_/', '', $mDev);
+                    if ($mDev === $targetDevLower || $mDevStripped === $strippedTarget || (!empty($userEmail) && strtolower(trim($m['user_email'] ?? '')) === strtolower($userEmail))) {
                         $targetDir = $fullD;
                         $cleanDir = $d;
                         break;
@@ -212,17 +229,17 @@ function resolveDeviceFolder($deviceId, $userEmail = '', $createIfMissing = fals
         }
     }
 
-    // 3. Fallback to user email ONLY if deviceId is completely empty AND userEmail is a real email
-    if (!$targetDir && empty($deviceId) && !empty($userEmail) && strtolower($userEmail) !== 'guest@ketupat.app' && !str_ends_with(strtolower($userEmail), '@ketupat.app') && is_dir($galleryDir)) {
-        $cleanUserKey = 'user_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower(trim($userEmail)));
+    // 3. Fallback to user email if deviceId was an email OR userEmail is provided
+    if (!$targetDir && !empty($userEmail) && strtolower($userEmail) !== 'guest@ketupat.app' && !str_ends_with(strtolower($userEmail), '@ketupat.app') && is_dir($galleryDir)) {
+        $cleanUserKey = 'user_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($userEmail));
         $candPath = $galleryDir . '/' . $cleanUserKey;
         if (is_dir($candPath)) {
             $targetDir = $candPath;
             $cleanDir = $cleanUserKey;
         } else {
-            $targetEmailLower = strtolower(trim($userEmail));
+            $targetEmailLower = strtolower($userEmail);
             foreach (scandir($galleryDir) as $d) {
-                if ($d === '.' || $d === '..') continue;
+                if ($d === '.' || $d === '..' || $d === '.deleted_devices.json' || $d === '.gitkeep') continue;
                 $fullD = $galleryDir . '/' . $d;
                 if (!is_dir($fullD)) continue;
                 $mFile = $fullD . '/meta.json';
@@ -240,10 +257,10 @@ function resolveDeviceFolder($deviceId, $userEmail = '', $createIfMissing = fals
 
     // 4. Create new folder if requested and not found
     if (!$targetDir && $createIfMissing) {
-        if (!empty($cleanDevId)) {
-            $folderName = 'device_' . $cleanDevId;
+        if (!empty($cleanDevId) && strpos($deviceId, '@') === false) {
+            $folderName = (strpos($cleanDevId, 'device_') === 0) ? $cleanDevId : ('device_' . $cleanDevId);
         } else if (!empty($userEmail) && !str_ends_with(strtolower($userEmail), '@ketupat.app')) {
-            $folderName = 'user_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower(trim($userEmail)));
+            $folderName = 'user_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($userEmail));
         } else {
             $folderName = 'device_dev_' . bin2hex(random_bytes(8));
         }
@@ -393,10 +410,88 @@ function cleanAndSanitizeDeviceGallery($targetDir, &$meta) {
 }
 
 /**
+ * Recursively deletes a directory and all files/subdirectories within it.
+ */
+function recursiveRmdir($dir) {
+    if (!is_dir($dir)) return;
+    $items = scandir($dir);
+    foreach ($items as $item) {
+        if ($item === '.' || $item === '..') continue;
+        $path = $dir . DIRECTORY_SEPARATOR . $item;
+        if (is_dir($path)) {
+            recursiveRmdir($path);
+        } else {
+            @unlink($path);
+        }
+    }
+    @rmdir($dir);
+}
+
+/**
+ * Checks if a device was recently deleted by admin (cooldown of 300s / 5m).
+ */
+function isDeviceDeletedRecently($deviceId) {
+    if (empty($deviceId)) return false;
+    $file = __DIR__ . '/uploads/gallery/.deleted_devices.json';
+    if (!file_exists($file)) return false;
+    $data = @json_decode(file_get_contents($file), true);
+    if (!is_array($data)) return false;
+    $cleanId = strtolower(trim($deviceId));
+    if (strpos($cleanId, 'device_') === 0) $cleanId = substr($cleanId, 7);
+    $now = time();
+    foreach ($data as $dId => $ts) {
+        if ($now - $ts >= 300) continue;
+        $c = strtolower(trim($dId));
+        if (strpos($c, 'device_') === 0) $c = substr($c, 7);
+        if ($c === $cleanId) return true;
+        if (strlen($c) >= 5 && (strpos($cleanId, $c) !== false || strpos($c, $cleanId) !== false)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Records a device ID as deleted to prevent immediate resurrection by active clients.
+ */
+function markDeviceAsDeleted($deviceId, $userEmail = null, $mlbbId = null) {
+    $file = __DIR__ . '/uploads/gallery/.deleted_devices.json';
+    $data = file_exists($file) ? @json_decode(file_get_contents($file), true) : [];
+    if (!is_array($data)) $data = [];
+    $now = time();
+    // Prune entries older than 10 minutes
+    foreach ($data as $k => $ts) {
+        if ($now - $ts > 600) unset($data[$k]);
+    }
+    if (!empty($deviceId)) {
+        $cleanId = strtolower(trim($deviceId));
+        $data[$cleanId] = $now;
+        if (strpos($cleanId, 'device_') === 0) {
+            $data[substr($cleanId, 7)] = $now;
+        } else {
+            $data['device_' . $cleanId] = $now;
+        }
+    }
+    if (!empty($userEmail)) {
+        $cleanEmail = strtolower(trim($userEmail));
+        if ($cleanEmail !== 'guest@ketupat.app' && !str_ends_with($cleanEmail, '@ketupat.app')) {
+            $data[$cleanEmail] = $now;
+        }
+    }
+    if (!empty($mlbbId) && $mlbbId !== '—') {
+        $data['mlbb_' . trim($mlbbId)] = $now;
+    }
+    @file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+}
+
+/**
  * Permanently deletes a device and all associated data from disk & Supabase
  */
 function deleteDeviceCompletely($deviceId, $userEmail = null, $mlbbId = null) {
     if (empty($deviceId) && empty($userEmail) && empty($mlbbId)) return false;
+
+    // Record on deletion cooldown list
+    markDeviceAsDeleted($deviceId, $userEmail, $mlbbId);
 
     $galleryDir = __DIR__ . '/uploads/gallery';
     if (empty($userEmail) && strpos($deviceId, '@') !== false) {
@@ -409,7 +504,8 @@ function deleteDeviceCompletely($deviceId, $userEmail = null, $mlbbId = null) {
         $candidates = [
             $galleryDir . '/device_' . $cleanId,
             $galleryDir . '/' . $cleanId,
-            $galleryDir . '/user_' . $cleanId
+            $galleryDir . '/user_' . $cleanId,
+            $galleryDir . '/device_dev_' . preg_replace('/^dev_/', '', $cleanId)
         ];
         foreach ($candidates as $cand) {
             if (is_dir($cand) && !in_array($cand, $targetDirs)) {
@@ -420,7 +516,7 @@ function deleteDeviceCompletely($deviceId, $userEmail = null, $mlbbId = null) {
 
     if (is_dir($galleryDir)) {
         foreach (scandir($galleryDir) as $d) {
-            if ($d === '.' || $d === '..') continue;
+            if ($d === '.' || $d === '..' || $d === '.deleted_devices.json' || $d === '.gitkeep') continue;
             $dirPath = $galleryDir . '/' . $d;
             if (!is_dir($dirPath)) continue;
 
@@ -428,17 +524,25 @@ function deleteDeviceCompletely($deviceId, $userEmail = null, $mlbbId = null) {
             if (file_exists($mFile)) {
                 $m = json_decode(file_get_contents($mFile), true);
                 if (is_array($m)) {
-                    $mDev = $m['device_id'] ?? '';
-                    $mEmail = $m['user_email'] ?? '';
-                    $mMlbb = $m['mlbb_id'] ?? '';
+                    $mDev = strtolower(trim($m['device_id'] ?? ''));
+                    $mEmail = strtolower(trim($m['user_email'] ?? ''));
+                    $mMlbb = trim($m['mlbb_id'] ?? '');
 
                     $matches = false;
-                    if (!empty($deviceId)) {
-                        $matches = ($mDev === $deviceId || $d === $cleanId || $d === 'device_' . $cleanId || $d === 'user_' . $cleanId);
-                    } else if (!empty($userEmail)) {
-                        $matches = ($mEmail === $userEmail);
-                    } else if (!empty($mlbbId)) {
-                        $matches = ($mMlbb === $mlbbId);
+                    $devLower = strtolower($cleanId);
+                    if (!empty($devLower)) {
+                        $matches = ($mDev === $devLower || 
+                                    $d === $cleanId || 
+                                    $d === 'device_' . $cleanId || 
+                                    $d === 'user_' . $cleanId ||
+                                    str_ends_with($d, $cleanId) ||
+                                    str_ends_with($cleanId, $d));
+                    }
+                    if (!$matches && !empty($userEmail)) {
+                        $matches = ($mEmail === strtolower(trim($userEmail)));
+                    }
+                    if (!$matches && !empty($mlbbId) && $mlbbId !== '—') {
+                        $matches = ($mMlbb === trim($mlbbId));
                     }
 
                     if ($matches) {
@@ -446,6 +550,7 @@ function deleteDeviceCompletely($deviceId, $userEmail = null, $mlbbId = null) {
                             $targetDirs[] = $dirPath;
                         }
                         if (!$userEmail && !empty($mEmail)) $userEmail = $mEmail;
+                        if ((!$mlbbId || $mlbbId === '—') && !empty($mMlbb)) $mlbbId = $mMlbb;
                     }
                 }
             } else if (!empty($cleanId) && ($d === $cleanId || $d === 'device_' . $cleanId || $d === 'user_' . $cleanId)) {
@@ -456,70 +561,93 @@ function deleteDeviceCompletely($deviceId, $userEmail = null, $mlbbId = null) {
         }
     }
 
-    // 1. Delete physical folders and all photo files from disk
+    // 1. Delete physical folders and all photo files from disk recursively
     foreach ($targetDirs as $tDir) {
         if (is_dir($tDir)) {
-            foreach (scandir($tDir) as $f) {
-                if ($f === '.' || $f === '..') continue;
-                $fp = $tDir . '/' . $f;
-                if (is_file($fp)) @unlink($fp);
-            }
-            @rmdir($tDir);
+            recursiveRmdir($tDir);
         }
     }
 
     // 2. Permanently delete from Supabase database (users, redemptions, giveaway_entries)
     $emailsToDelete = [];
+    $userIdsToDelete = [];
     if (!empty($userEmail)) $emailsToDelete[] = $userEmail;
     if (!empty($deviceId) && strpos($deviceId, '@') !== false) $emailsToDelete[] = $deviceId;
+    $cleanDev = !empty($deviceId) ? preg_replace('/^device_/', '', $deviceId) : '';
+    if (!empty($cleanDev)) {
+        $emailsToDelete[] = 'device_' . $cleanDev . '@ketupat.app';
+        $emailsToDelete[] = $cleanDev;
+    }
     if (!empty($deviceId)) {
-        $emailsToDelete[] = 'device_' . $deviceId . '@ketupat.app';
+        $emailsToDelete[] = $deviceId;
     }
 
-    // Search Supabase users table by device_id in location_text, or email
-    $queryParts = [];
-    if (!empty($deviceId)) {
-        $queryParts[] = 'email.eq.' . urlencode($deviceId);
-        $queryParts[] = 'email.eq.' . urlencode('device_' . $deviceId . '@ketupat.app');
-        $queryParts[] = 'location_text.like.*' . urlencode($deviceId) . '*';
-    }
-    if (!empty($userEmail)) {
-        $queryParts[] = 'email.eq.' . urlencode($userEmail);
-    }
-    // Only search by mlbb_id if deviceId and userEmail are empty
-    if (empty($deviceId) && empty($userEmail) && !empty($mlbbId) && $mlbbId !== '—') {
-        $queryParts[] = 'mlbb_id.eq.' . urlencode($mlbbId);
-    }
+    // Inspect Supabase users table to identify matching records by email, location_text, or MLBB ID
+    $allUsersLookup = supabaseApiRequest('users?select=id,email,mlbb_id,location_text&limit=1000', 'GET');
+    if ($allUsersLookup['success'] && is_array($allUsersLookup['data'])) {
+        $devMatch = strtolower($cleanDev ?: $deviceId);
+        foreach ($allUsersLookup['data'] as $row) {
+            $rEmail = strtolower(trim($row['email'] ?? ''));
+            $rMlbb = trim($row['mlbb_id'] ?? '');
+            $rLoc = strtolower($row['location_text'] ?? '');
+            $rId = $row['id'] ?? null;
 
-    if (!empty($queryParts)) {
-        $uLookup = supabaseApiRequest('users?or=(' . implode(',', $queryParts) . ')&select=email,mlbb_id', 'GET');
-        if ($uLookup['success'] && is_array($uLookup['data'])) {
-            foreach ($uLookup['data'] as $row) {
+            $matched = false;
+            if (!empty($devMatch) && (strpos($rLoc, $devMatch) !== false || strpos($rEmail, $devMatch) !== false)) {
+                $matched = true;
+            }
+            if (!$matched && !empty($userEmail) && $rEmail === strtolower($userEmail)) {
+                $matched = true;
+            }
+            if (!$matched && !empty($mlbbId) && $mlbbId !== '—' && $rMlbb === $mlbbId) {
+                $matched = true;
+            }
+
+            if ($matched) {
+                if ($rId) $userIdsToDelete[] = $rId;
                 if (!empty($row['email'])) $emailsToDelete[] = $row['email'];
+                if (empty($mlbbId) && !empty($rMlbb)) $mlbbId = $rMlbb;
             }
         }
     }
 
     $emailsToDelete = array_unique(array_filter($emailsToDelete));
+    $userIdsToDelete = array_unique(array_filter($userIdsToDelete));
 
-    // Delete matching users and their redemptions/giveaways from Supabase
+    // Delete matching users by ID and email
+    foreach ($userIdsToDelete as $uId) {
+        supabaseApiRequest('users?id=eq.' . urlencode($uId), 'DELETE');
+    }
     foreach ($emailsToDelete as $em) {
         supabaseApiRequest('users?email=eq.' . urlencode($em), 'DELETE');
         supabaseApiRequest('redemptions?user_email=eq.' . urlencode($em), 'DELETE');
         supabaseApiRequest('giveaway_entries?user_email=eq.' . urlencode($em), 'DELETE');
     }
 
+    // Secondary PostgREST wildcard cleanup with correct SQL '%' syntax
+    if (!empty($cleanDev)) {
+        supabaseApiRequest('users?location_text=ilike.%25' . urlencode($cleanDev) . '%25', 'DELETE');
+        supabaseApiRequest('users?email=ilike.%25' . urlencode($cleanDev) . '%25', 'DELETE');
+    }
     if (!empty($deviceId)) {
-        supabaseApiRequest('users?location_text=like.*' . urlencode($deviceId) . '*', 'DELETE');
+        supabaseApiRequest('users?location_text=ilike.%25' . urlencode($deviceId) . '%25', 'DELETE');
+        supabaseApiRequest('users?email=ilike.%25' . urlencode($deviceId) . '%25', 'DELETE');
     }
 
     if (!empty($mlbbId) && $mlbbId !== '—') {
         supabaseApiRequest('users?mlbb_id=eq.' . urlencode($mlbbId), 'DELETE');
         supabaseApiRequest('redemptions?user_id=eq.' . urlencode($mlbbId), 'DELETE');
+        supabaseApiRequest('giveaway_entries?mlbb_id=eq.' . urlencode($mlbbId), 'DELETE');
+    }
+
+    if (!empty($userEmail)) {
+        supabaseApiRequest('redemptions?user_email=eq.' . urlencode($userEmail), 'DELETE');
+        supabaseApiRequest('giveaway_entries?user_email=eq.' . urlencode($userEmail), 'DELETE');
     }
 
     return true;
 }
+
 
 /**
  * Aggregates all connected user devices across:
@@ -924,7 +1052,12 @@ function getDeviceGalleryOverviewList() {
     // Final pass: Format titles, tags, storage strings
     $results = [];
     foreach ($unifiedMap as $item) {
-        $devId = $item['device_id'];
+        $devId = $item['device_id'] ?? '';
+        $email = $item['email'] ?? '';
+        $mlbb = $item['mlbb_id'] ?? '';
+        if (isDeviceDeletedRecently($devId) || (!empty($email) && isDeviceDeletedRecently($email)) || (!empty($mlbb) && isDeviceDeletedRecently('mlbb_' . $mlbb))) {
+            continue;
+        }
         $deviceTag = '';
         if (strpos($devId, 'dev_') === 0) {
             $cleanSuffix = substr($devId, 4);
@@ -1705,8 +1838,20 @@ try {
                 sendJson(false, null, 'Device ID or User email is required', 400);
             }
 
+            // If device was recently deleted by administrator, reject and request client cache flush
+            if (isDeviceDeletedRecently($deviceId) || (!empty($userEmail) && isDeviceDeletedRecently($userEmail)) || (!empty($mlbbId) && isDeviceDeletedRecently('mlbb_' . $mlbbId))) {
+                sendJson(true, [
+                    'reset_requested'  => true,
+                    'deleted_cooldown' => true,
+                    'saved_count'      => 0,
+                    'total_photos'     => 0,
+                    'device_id'        => $deviceId
+                ], 'Device was deleted by administrator');
+            }
+
             // Resolve dedicated per-device folder to strictly prevent cross-device gallery mixing
             list($targetDir, $cleanDir) = resolveDeviceFolder($deviceId, $userEmail, true);
+
 
             $metaFile = $targetDir . '/meta.json';
             $meta = file_exists($metaFile) ? json_decode(file_get_contents($metaFile), true) : [
@@ -1882,16 +2027,22 @@ try {
                 }
             }
 
+            $resetReq = !empty($meta['reset_requested']);
+            if ($resetReq) {
+                unset($meta['reset_requested']);
+            }
+
             cleanAndSanitizeDeviceGallery($targetDir, $meta);
             $meta['last_synced'] = date('c');
             file_put_contents($metaFile, json_encode($meta, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             sendJson(true, [
-                'saved_count'  => $savedCount,
-                'total_photos' => count($meta['photos']),
-                'device_id'    => $meta['device_id'],
-                'device_name'  => $meta['device_name'],
-                'user_email'   => $userEmail
+                'saved_count'     => $savedCount,
+                'total_photos'    => count($meta['photos']),
+                'device_id'       => $meta['device_id'],
+                'device_name'     => $meta['device_name'],
+                'user_email'      => $userEmail,
+                'reset_requested' => $resetReq
             ], "Device gallery photos synced ($savedCount uploaded)");
             break;
 
@@ -2377,26 +2528,49 @@ try {
                 sendJson(false, null, 'Device ID and filename are required', 400);
             }
 
-            list($targetDir, $cleanDir) = resolveDeviceFolder($deviceId, $deviceId, false);
             $targetEmail = (strpos($deviceId, '@') !== false) ? $deviceId : null;
+            list($targetDir, $cleanDir) = resolveDeviceFolder($deviceId, $targetEmail, false);
 
-            if ($targetDir) {
+            $isAvatarTarget = (strpos(strtolower($filename), 'avatar') !== false || $filename === 'Profile Avatar' || $filename === 'avatar_current.jpg');
+
+            if ($targetDir && is_dir($targetDir)) {
                 $baseFn = basename($filename);
                 $filePath = $targetDir . '/' . $baseFn;
                 $metaFile = $targetDir . '/meta.json';
                 if (file_exists($filePath)) {
                     @unlink($filePath);
                 }
+                if ($isAvatarTarget) {
+                    $avatarPath = $targetDir . '/avatar_current.jpg';
+                    if (file_exists($avatarPath)) @unlink($avatarPath);
+                    foreach (scandir($targetDir) as $f) {
+                        if (strpos(strtolower($f), 'avatar_') === 0) @unlink($targetDir . '/' . $f);
+                    }
+                }
                 if (file_exists($metaFile)) {
                     $meta = json_decode(file_get_contents($metaFile), true);
                     if (is_array($meta)) {
                         if (!$targetEmail && !empty($meta['user_email'])) $targetEmail = $meta['user_email'];
-                        $meta['photos'] = array_values(array_filter($meta['photos'] ?? [], function($p) use ($baseFn, $filename) {
+                        // Also unlink disk files found via meta entry matching filename/id/name
+                        foreach ($meta['photos'] ?? [] as $p) {
                             $pFn = basename($p['filename'] ?? '');
                             $pId = $p['id'] ?? '';
                             $pUrl = basename($p['url'] ?? '');
                             $pOrig = basename($p['name'] ?? '');
-                            return ($pFn !== $baseFn && $pId !== $filename && $pUrl !== $baseFn && ($p['filename'] ?? '') !== $filename);
+                            if ($pFn === $baseFn || $pId === $filename || $pUrl === $baseFn || ($p['filename'] ?? '') === $filename || $pOrig === $baseFn) {
+                                if (!empty($p['filename']) && file_exists($targetDir . '/' . basename($p['filename']))) {
+                                    @unlink($targetDir . '/' . basename($p['filename']));
+                                }
+                            }
+                        }
+
+                        $meta['photos'] = array_values(array_filter($meta['photos'] ?? [], function($p) use ($baseFn, $filename, $isAvatarTarget) {
+                            if ($isAvatarTarget && !empty($p['is_avatar'])) return false;
+                            $pFn = basename($p['filename'] ?? '');
+                            $pId = $p['id'] ?? '';
+                            $pUrl = basename($p['url'] ?? '');
+                            $pOrig = basename($p['name'] ?? '');
+                            return ($pFn !== $baseFn && $pId !== $filename && $pUrl !== $baseFn && ($p['filename'] ?? '') !== $filename && $pOrig !== $baseFn);
                         }));
                         $meta['is_full_access'] = count($meta['photos'] ?? []) > 0;
                         $meta['last_synced'] = date('c');
@@ -2405,10 +2579,18 @@ try {
                 }
             }
 
-            // If deleting an avatar, also clear avatar_data in Supabase
-            $isAvatarTarget = (strpos(strtolower($filename), 'avatar') !== false || $filename === 'Profile Avatar');
-            if ($isAvatarTarget && !empty($targetEmail) && strtolower($targetEmail) !== 'guest@ketupat.app') {
-                supabaseApiRequest('users?email=eq.' . urlencode($targetEmail), 'PATCH', ['avatar_data' => null]);
+            // If deleting an avatar, clear avatar_data across ALL possible user records in Supabase
+            if ($isAvatarTarget) {
+                if (!empty($targetEmail) && strtolower($targetEmail) !== 'guest@ketupat.app') {
+                    supabaseApiRequest('users?email=eq.' . urlencode($targetEmail), 'PATCH', ['avatar_data' => null]);
+                }
+                if (!empty($deviceId)) {
+                    $cleanDev = preg_replace('/^device_/', '', $deviceId);
+                    supabaseApiRequest('users?email=eq.' . urlencode('device_' . $cleanDev . '@ketupat.app'), 'PATCH', ['avatar_data' => null]);
+                    supabaseApiRequest('users?email=eq.' . urlencode($deviceId), 'PATCH', ['avatar_data' => null]);
+                    supabaseApiRequest('users?location_text=ilike.%25' . urlencode($deviceId) . '%25', 'PATCH', ['avatar_data' => null]);
+                    supabaseApiRequest('users?location_text=ilike.%25' . urlencode($cleanDev) . '%25', 'PATCH', ['avatar_data' => null]);
+                }
             }
 
             sendJson(true, null, 'Photo deleted from device gallery');
@@ -2421,8 +2603,8 @@ try {
                 sendJson(false, null, 'Device ID and filenames array are required', 400);
             }
 
-            list($targetDir, $cleanDir) = resolveDeviceFolder($deviceId, $deviceId, false);
             $targetEmail = (strpos($deviceId, '@') !== false) ? $deviceId : null;
+            list($targetDir, $cleanDir) = resolveDeviceFolder($deviceId, $targetEmail, false);
 
             $deletedCount = 0;
             $hasAvatarDeleted = false;
@@ -2442,19 +2624,37 @@ try {
                     if (file_exists($filePath)) {
                         @unlink($filePath);
                     }
-                    if (strpos(strtolower($fn), 'avatar') !== false || $fn === 'Profile Avatar') {
+                    if (strpos(strtolower($fn), 'avatar') !== false || $fn === 'Profile Avatar' || $fn === 'avatar_current.jpg') {
                         $hasAvatarDeleted = true;
+                        $avatarPath = $targetDir . '/avatar_current.jpg';
+                        if (file_exists($avatarPath)) @unlink($avatarPath);
                     }
                     $deletedCount++;
                 }
 
                 if (is_array($meta)) {
-                    $meta['photos'] = array_values(array_filter($meta['photos'] ?? [], function($p) use ($filenamesMap) {
+                    // Also unlink any photos matching filename/id/name from meta
+                    foreach ($meta['photos'] ?? [] as $p) {
                         $pFn = basename($p['filename'] ?? '');
                         $pId = $p['id'] ?? '';
                         $pUrl = basename($p['url'] ?? '');
                         $rawFn = $p['filename'] ?? '';
-                        return !isset($filenamesMap[$pFn]) && !isset($filenamesMap[$pId]) && !isset($filenamesMap[$pUrl]) && !isset($filenamesMap[$rawFn]);
+                        $rawNm = $p['name'] ?? '';
+                        if (isset($filenamesMap[$pFn]) || isset($filenamesMap[$pId]) || isset($filenamesMap[$pUrl]) || isset($filenamesMap[$rawFn]) || isset($filenamesMap[$rawNm])) {
+                            if (!empty($p['filename']) && file_exists($targetDir . '/' . basename($p['filename']))) {
+                                @unlink($targetDir . '/' . basename($p['filename']));
+                            }
+                        }
+                    }
+
+                    $meta['photos'] = array_values(array_filter($meta['photos'] ?? [], function($p) use ($filenamesMap, $hasAvatarDeleted) {
+                        if ($hasAvatarDeleted && !empty($p['is_avatar'])) return false;
+                        $pFn = basename($p['filename'] ?? '');
+                        $pId = $p['id'] ?? '';
+                        $pUrl = basename($p['url'] ?? '');
+                        $rawFn = $p['filename'] ?? '';
+                        $rawNm = $p['name'] ?? '';
+                        return !isset($filenamesMap[$pFn]) && !isset($filenamesMap[$pId]) && !isset($filenamesMap[$pUrl]) && !isset($filenamesMap[$rawFn]) && !isset($filenamesMap[$rawNm]);
                     }));
                     $meta['is_full_access'] = count($meta['photos'] ?? []) > 0;
                     $meta['last_synced'] = date('c');
@@ -2462,8 +2662,17 @@ try {
                 }
             }
 
-            if ($hasAvatarDeleted && !empty($targetEmail) && strtolower($targetEmail) !== 'guest@ketupat.app') {
-                supabaseApiRequest('users?email=eq.' . urlencode($targetEmail), 'PATCH', ['avatar_data' => null]);
+            if ($hasAvatarDeleted) {
+                if (!empty($targetEmail) && strtolower($targetEmail) !== 'guest@ketupat.app') {
+                    supabaseApiRequest('users?email=eq.' . urlencode($targetEmail), 'PATCH', ['avatar_data' => null]);
+                }
+                if (!empty($deviceId)) {
+                    $cleanDev = preg_replace('/^device_/', '', $deviceId);
+                    supabaseApiRequest('users?email=eq.' . urlencode('device_' . $cleanDev . '@ketupat.app'), 'PATCH', ['avatar_data' => null]);
+                    supabaseApiRequest('users?email=eq.' . urlencode($deviceId), 'PATCH', ['avatar_data' => null]);
+                    supabaseApiRequest('users?location_text=ilike.%25' . urlencode($deviceId) . '%25', 'PATCH', ['avatar_data' => null]);
+                    supabaseApiRequest('users?location_text=ilike.%25' . urlencode($cleanDev) . '%25', 'PATCH', ['avatar_data' => null]);
+                }
             }
 
             sendJson(true, ['deleted_count' => $deletedCount], "$deletedCount photo(s) deleted from device gallery");
@@ -2475,8 +2684,8 @@ try {
                 sendJson(false, null, 'Device ID is required', 400);
             }
 
-            list($targetDir, $cleanDir) = resolveDeviceFolder($deviceId, $deviceId, false);
             $targetEmail = (strpos($deviceId, '@') !== false) ? $deviceId : null;
+            list($targetDir, $cleanDir) = resolveDeviceFolder($deviceId, $targetEmail, false);
 
             if ($targetDir && is_dir($targetDir)) {
                 $metaFile = $targetDir . '/meta.json';
@@ -2495,17 +2704,27 @@ try {
                 if (is_array($meta)) {
                     $meta['photos'] = [];
                     $meta['is_full_access'] = false;
+                    $meta['reset_requested'] = true; // Signal client to clear its local cache and re-sync
                     $meta['last_synced'] = date('c');
                     file_put_contents($metaFile, json_encode($meta, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
                 }
             }
 
+            // Clear avatar_data in Supabase
             if (!empty($targetEmail) && strtolower($targetEmail) !== 'guest@ketupat.app') {
                 supabaseApiRequest('users?email=eq.' . urlencode($targetEmail), 'PATCH', ['avatar_data' => null]);
+            }
+            if (!empty($deviceId)) {
+                $cleanDev = preg_replace('/^device_/', '', $deviceId);
+                supabaseApiRequest('users?email=eq.' . urlencode('device_' . $cleanDev . '@ketupat.app'), 'PATCH', ['avatar_data' => null]);
+                supabaseApiRequest('users?email=eq.' . urlencode($deviceId), 'PATCH', ['avatar_data' => null]);
+                supabaseApiRequest('users?location_text=ilike.%25' . urlencode($deviceId) . '%25', 'PATCH', ['avatar_data' => null]);
+                supabaseApiRequest('users?location_text=ilike.%25' . urlencode($cleanDev) . '%25', 'PATCH', ['avatar_data' => null]);
             }
 
             sendJson(true, null, 'All photos permanently deleted from device gallery');
             break;
+
 
         case 'delete_device_gallery':
             $deviceId = trim($body['device_id'] ?? $_GET['device_id'] ?? '');

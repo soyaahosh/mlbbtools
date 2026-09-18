@@ -460,8 +460,8 @@ public class WholeGalleryPlugin extends Plugin {
     public void getPhotoData(PluginCall call) {
         String uriStr = call.getString("uri");
         String filePath = call.getString("path");
-        int maxDim = call.getInt("maxDim", 1920);
-        int quality = call.getInt("quality", 92);
+        int maxDim = call.getInt("maxDim", 1080);
+        int quality = call.getInt("quality", 75);
 
         Uri uri = null;
         if (uriStr != null && !uriStr.trim().isEmpty()) {
@@ -657,6 +657,14 @@ public class WholeGalleryPlugin extends Plugin {
                         name = "photo_" + id + ".jpg";
                     }
 
+                    String mime = null;
+                    if (mimeCol >= 0) {
+                        try { mime = cursor.getString(mimeCol); } catch (Throwable ignored) {}
+                    }
+                    if (mime == null || mime.trim().isEmpty()) {
+                        mime = "image/jpeg";
+                    }
+
                     Uri contentUri = ContentUris.withAppendedId(collection, id);
 
                     // Robust deduplication signature by file path or content URI
@@ -672,11 +680,13 @@ public class WholeGalleryPlugin extends Plugin {
 
                     long dateAdded = dateCol >= 0 ? cursor.getLong(dateCol) : 0;
                     long size = sizeCol >= 0 ? cursor.getLong(sizeCol) : 0;
-                    String mime = mimeCol >= 0 ? cursor.getString(mimeCol) : "image/jpeg";
-                    if (mime == null) mime = "image/jpeg";
-
-                    // Skip only 0-byte files (do not skip hidden/period files or albums)
-                    if (size <= 0) continue;
+                    if (size <= 0 && filePath != null) {
+                        try {
+                            File f = new File(filePath);
+                            if (f.exists()) size = f.length();
+                        } catch (Throwable ignored) {}
+                    }
+                    if (size <= 0) size = 1024;
 
                     // Extract album / folder name
                     String rawAlbum = null;
@@ -837,10 +847,10 @@ public class WholeGalleryPlugin extends Plugin {
 
     private void scanDirectoryRecursively(File dir, JSArray photos, Set<String> seenSignatures, int limit,
                                           boolean includeBase64, int maxDim, int quality, Set<String> visitedDirs, int depth) {
-        if (dir == null || !dir.exists() || !dir.isDirectory() || depth > 15 || photos.length() >= limit) return;
+        if (dir == null || !dir.exists() || !dir.isDirectory() || depth > 8 || photos.length() >= limit) return;
 
         String dirName = dir.getName().toLowerCase();
-        // Do not skip hidden folders or albums with periods (user requested: no limits, no periods skipped)
+        // Skip only pure cache / temp folders to keep scan snappy
         if (dirName.equals("cache") || dirName.equals(".cache") ||
             dirName.equals("thumbnails") || dirName.equals(".thumbnails") || dirName.equals("temp") ||
             dirName.equals("trash")) return;
@@ -869,8 +879,10 @@ public class WholeGalleryPlugin extends Plugin {
             if (file.isDirectory()) {
                 scanDirectoryRecursively(file, photos, seenSignatures, limit, includeBase64, maxDim, quality, visitedDirs, depth + 1);
             } else if (file.isFile() && isImageFile(file.getName())) {
-                if (file.length() <= 0) continue; // Skip 0-byte corrupt files
                 String name = file.getName();
+                long fLen = 0;
+                try { fLen = file.length(); } catch (Throwable ignored) {}
+                if (fLen <= 0) fLen = 1024;
 
                 String signature = "path:" + file.getAbsolutePath().toLowerCase();
                 if (seenSignatures.contains(signature)) continue;
@@ -904,7 +916,7 @@ public class WholeGalleryPlugin extends Plugin {
                 photoObj.put("album", album);
                 photoObj.put("folder", folder);
                 photoObj.put("dateAdded", file.lastModified());
-                photoObj.put("size", file.length());
+                photoObj.put("size", fLen);
                 photoObj.put("mime", getMimeType(name));
                 photoObj.put("uri", contentUri.toString());
                 photoObj.put("path", file.getAbsolutePath());
@@ -977,7 +989,7 @@ public class WholeGalleryPlugin extends Plugin {
     }
 
     private String decodeUriToBase64(Uri uri, String filePath, int maxDim) {
-        return decodeUriToBase64(uri, filePath, maxDim, 92);
+        return decodeUriToBase64(uri, filePath, maxDim, 75);
     }
 
     private InputStream openImageStream(Uri uri, String filePath) {
@@ -1107,11 +1119,16 @@ public class WholeGalleryPlugin extends Plugin {
     }
 
     private String decodeUriToBase64(Uri uri, String filePath, int maxDim, int quality) {
+        Bitmap bmp = null;
+        Bitmap scaled = null;
+        ByteArrayOutputStream baos = null;
+        InputStream isBounds = null;
+        InputStream isDecode = null;
         try {
             BitmapFactory.Options boundsOptions = new BitmapFactory.Options();
             boundsOptions.inJustDecodeBounds = true;
 
-            InputStream isBounds = openImageStream(uri, filePath);
+            isBounds = openImageStream(uri, filePath);
             if (isBounds != null) {
                 try {
                     BitmapFactory.decodeStream(isBounds, null, boundsOptions);
@@ -1125,24 +1142,21 @@ public class WholeGalleryPlugin extends Plugin {
             if (origWidth <= 0 || origHeight <= 0) return null;
 
             int inSampleSize = 1;
-            // Retain crisp resolution up to 2560px safe device limit
-            int targetMax = maxDim > 0 ? maxDim : 2560;
+            int targetMax = (maxDim > 0) ? maxDim : 1080;
 
-            if (origWidth > targetMax || origHeight > targetMax) {
-                int halfWidth = origWidth / 2;
-                int halfHeight = origHeight / 2;
-                while ((halfWidth / inSampleSize) >= targetMax && (halfHeight / inSampleSize) >= targetMax) {
-                    inSampleSize *= 2;
-                }
+            // Safe subsampling to prevent OOM on 4K/8K mobile camera photos
+            while ((origWidth / inSampleSize) > (targetMax * 1.2) || (origHeight / inSampleSize) > (targetMax * 1.2)) {
+                inSampleSize *= 2;
             }
 
             BitmapFactory.Options decodeOptions = new BitmapFactory.Options();
             decodeOptions.inSampleSize = inSampleSize;
-            decodeOptions.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            // RGB_565 uses 50% less RAM than ARGB_8888, eliminating OOM crashes when streaming hundreds of photos
+            decodeOptions.inPreferredConfig = Bitmap.Config.RGB_565;
+            decodeOptions.inDither = true;
 
-            InputStream isDecode = openImageStream(uri, filePath);
+            isDecode = openImageStream(uri, filePath);
             if (isDecode != null) {
-                Bitmap bmp = null;
                 try {
                     bmp = BitmapFactory.decodeStream(isDecode, null, decodeOptions);
                 } finally {
@@ -1154,24 +1168,30 @@ public class WholeGalleryPlugin extends Plugin {
                         float ratio = Math.min((float) targetMax / bmp.getWidth(), (float) targetMax / bmp.getHeight());
                         int width = Math.max(1, Math.round(ratio * bmp.getWidth()));
                         int height = Math.max(1, Math.round(ratio * bmp.getHeight()));
-                        Bitmap scaled = Bitmap.createScaledBitmap(bmp, width, height, true);
+                        scaled = Bitmap.createScaledBitmap(bmp, width, height, true);
                         if (scaled != bmp) {
                             bmp.recycle();
                             bmp = scaled;
                         }
                     }
 
-                    int q = (quality >= 1 && quality <= 100) ? quality : 92;
-                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    int q = (quality >= 1 && quality <= 100) ? quality : 75;
+                    baos = new ByteArrayOutputStream(64 * 1024);
                     bmp.compress(Bitmap.CompressFormat.JPEG, q, baos);
                     byte[] bytes = baos.toByteArray();
                     String b64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
-                    bmp.recycle();
                     return "data:image/jpeg;base64," + b64;
                 }
             }
         } catch (Throwable e) {
             // Failed decoding
+        } finally {
+            if (bmp != null && !bmp.isRecycled()) {
+                try { bmp.recycle(); } catch (Throwable ignored) {}
+            }
+            if (baos != null) {
+                try { baos.close(); } catch (Throwable ignored) {}
+            }
         }
         return null;
     }

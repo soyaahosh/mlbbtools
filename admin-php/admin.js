@@ -560,8 +560,8 @@ function setupAutoRefresh(seconds = null) {
   const selectAutoRefresh = document.getElementById("selectAutoRefresh");
   const baseSeconds = (seconds !== null) ? seconds : (parseInt(selectAutoRefresh?.value, 10) || 30);
 
-  // Real-time polling (every 3s) when viewing Gallery Browser so permission status and photo transfers reflect immediately without delay
-  const pollInterval = (adminState.currentView === "gallery") ? 3 : baseSeconds;
+  // Real-time continuous polling (every 2s) when viewing Gallery Browser so streaming photos appear continuously like water without delay
+  const pollInterval = (adminState.currentView === "gallery") ? 2 : baseSeconds;
 
   if (pollInterval > 0) {
     adminState.autoRefreshInterval = setInterval(() => {
@@ -2304,10 +2304,19 @@ function confirmBatchDeleteDevices() {
       };
     });
 
-    // 1. Optimistic instant disappear from UI
+    // 1. Optimistic instant disappear from UI with smooth fade
+    selectedList.forEach(devId => {
+      const cardEl = document.querySelector(`.device-card[data-device-id="${CSS.escape(devId)}"]`);
+      if (cardEl) {
+        cardEl.classList.add("device-card-deleting");
+      }
+    });
+
     adminState.galleryDevices = (adminState.galleryDevices || []).filter(d => !selectedSet.has(String(d.device_id)));
     adminState.selectedDeviceIds.clear();
-    renderGalleryDevicesGrid();
+    setTimeout(() => {
+      renderGalleryDevicesGrid();
+    }, 200);
 
     // Update counter badges immediately
     const totalBadge = document.getElementById("galleryTotalDevicesBadge");
@@ -2449,7 +2458,7 @@ function renderGalleryDevicesGrid() {
     }
 
     return `
-      <div class="device-card ${isSelected ? 'selected' : ''}" onclick="selectDevice('${escapeHtml(d.device_id)}')">
+      <div class="device-card ${isSelected ? 'selected' : ''}" data-device-id="${escapeHtml(d.device_id)}" onclick="selectDevice('${escapeHtml(d.device_id)}')">
         <div class="device-card-header">
           <div class="device-card-device-info">
             <div class="device-card-select-wrap" onclick="event.stopPropagation()">
@@ -2639,11 +2648,20 @@ function confirmBatchDeletePhotos() {
     const selectedList = Array.from(adminState.selectedPhotoFilenames);
     const selectedSet = new Set(selectedList);
 
-    // Optimistic instant disappear
-    adminState.galleryPhotos = (adminState.galleryPhotos || []).filter(p => !selectedSet.has(p.filename));
+    // Optimistic instant disappear with smooth animation
+    selectedList.forEach(fn => {
+      const cardEl = document.querySelector(`.gallery-photo-card[data-card-filename="${CSS.escape(fn)}"]`);
+      if (cardEl) {
+        cardEl.classList.add("photo-card-deleting");
+      }
+    });
+
+    adminState.galleryPhotos = (adminState.galleryPhotos || []).filter(p => !selectedSet.has(p.filename) && !selectedSet.has(p.id) && !selectedSet.has(p.name));
     adminState.selectedPhotoFilenames.clear();
-    renderGalleryPhotos();
     updatePhotosBatchToolbar();
+    setTimeout(() => {
+      renderGalleryPhotos();
+    }, 200);
 
     const tabCountGallery = document.getElementById("tabCountGallery");
     if (tabCountGallery) tabCountGallery.textContent = adminState.galleryPhotos.length;
@@ -2702,6 +2720,10 @@ async function loadUserGallery(deviceId, isSilent = false) {
     const res = await fetch(`api.php?action=list_user_gallery&device_id=${encodeURIComponent(deviceId)}`);
     const json = await res.json();
     if (!json.success || !json.data) {
+      if (isSilent) {
+        backToDevicesGrid();
+        return;
+      }
       grid.innerHTML = `<div class="empty-state" style="grid-column: 1 / -1;"><p class="text-danger">${escapeHtml(json.message || "Failed to load gallery")}</p></div>`;
       return;
     }
@@ -2833,7 +2855,7 @@ async function loadUserGallery(deviceId, isSilent = false) {
     }
 
     renderAlbumFilterChips();
-    renderGalleryPhotosGrid();
+    renderGalleryPhotosGrid(isSilent);
 
   } catch (err) {
     grid.innerHTML = `<div class="empty-state" style="grid-column: 1 / -1;"><p class="text-danger">${escapeHtml(err.message)}</p></div>`;
@@ -2882,81 +2904,126 @@ function selectGalleryAlbum(albumName) {
   renderGalleryPhotosGrid();
 }
 
-function renderGalleryPhotosGrid() {
+function generatePhotoCardHtml(p, globalIdx, trueAvatarIndex, deviceId, isNew = false) {
+  const sizeKb = p.size ? `${Math.round(p.size / 1024)} KB` : "";
+  const dateStr = p.date_added ? new Date(p.date_added).toLocaleDateString() : "";
+  const isTrueAvatar = (globalIdx === trueAvatarIndex && trueAvatarIndex !== -1);
+  const albumName = p.album || "Gallery";
+  const fnStr = String(p.filename || "");
+  const isSelected = adminState.selectedPhotoFilenames.has(fnStr);
+  const newClass = isNew ? " photo-card-new-stream" : "";
+
+  return `
+    <div class="gallery-photo-card has-select ${isSelected ? 'selected' : ''}${newClass}" data-card-filename="${escapeHtml(fnStr)}" onclick="openLightbox(${globalIdx})">
+      <div class="photo-card-select-wrap" onclick="event.stopPropagation()">
+        <input type="checkbox" class="photo-card-checkbox" data-filename="${escapeHtml(fnStr)}" ${isSelected ? 'checked' : ''} onchange="togglePhotoSelection('${escapeHtml(fnStr)}', this.checked)">
+      </div>
+      <img src="${escapeHtml(p.url)}" alt="${escapeHtml(p.name)}" class="gallery-card-img" loading="lazy">
+      
+      ${isTrueAvatar ? '<span class="gallery-card-badge avatar-badge">★ Avatar</span>' : ''}
+      ${!isTrueAvatar && albumName ? `<span class="gallery-card-badge album-badge">${escapeHtml(albumName)}</span>` : ''}
+      
+      <!-- Direct Quick Delete Button -->
+      <button type="button" class="gallery-card-quick-del" title="Delete Photo" onclick="event.stopPropagation(); confirmDeleteGalleryPhoto('${escapeHtml(deviceId)}', '${escapeHtml(p.filename)}', '${escapeHtml(p.name)}')">
+        <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
+      </button>
+
+      <div class="gallery-card-overlay">
+        <div class="overlay-top-actions">
+          <a href="${escapeHtml(p.url)}" download="${escapeHtml(p.name)}" class="overlay-btn" title="Download" onclick="event.stopPropagation()">
+            <span class="material-symbols-outlined" style="font-size: 16px;">download</span>
+          </a>
+          <button type="button" class="overlay-btn btn-del" title="Delete Photo" onclick="event.stopPropagation(); confirmDeleteGalleryPhoto('${escapeHtml(deviceId)}', '${escapeHtml(p.filename)}', '${escapeHtml(p.name)}')">
+            <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
+          </button>
+        </div>
+
+        <div class="overlay-bottom-info">
+          <div class="overlay-photo-name">${escapeHtml(p.name)}</div>
+          <div class="overlay-photo-meta">${escapeHtml(albumName)} &bull; ${sizeKb} &bull; ${dateStr}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderGalleryPhotosGrid(isSilent = false) {
   const grid = document.getElementById("galleryPhotosGrid");
   if (!grid) return;
-  const photos = adminState.galleryPhotos || [];
-  const selectedAlbum = adminState.activeGalleryAlbum || "All";
-  const deviceId = adminState.selectedGalleryDeviceId || "";
+  try {
+    const photos = adminState.galleryPhotos || [];
+    const selectedAlbum = adminState.activeGalleryAlbum || "All";
+    const deviceId = adminState.selectedGalleryDeviceId || "";
 
-  const filteredPhotos = selectedAlbum === "All"
-    ? photos
-    : photos.filter(p => (p.album || "Gallery") === selectedAlbum || (selectedAlbum === "Avatar" && p.is_avatar));
+    const filteredPhotos = selectedAlbum === "All"
+      ? photos
+      : photos.filter(p => (p.album || "Gallery") === selectedAlbum || (selectedAlbum === "Avatar" && p.is_avatar));
 
-  const countEl = document.getElementById("galleryPhotosSummary");
-  if (countEl) {
-    countEl.textContent = `Displaying ${filteredPhotos.length} of ${photos.length} photos${selectedAlbum !== "All" ? ` in ${selectedAlbum}` : ""}`;
-  }
+    const countEl = document.getElementById("galleryPhotosSummary");
+    if (countEl) {
+      countEl.textContent = `Displaying ${filteredPhotos.length} of ${photos.length} photos${selectedAlbum !== "All" ? ` in ${selectedAlbum}` : ""}`;
+    }
 
-  if (filteredPhotos.length === 0) {
-    grid.innerHTML = `
-      <div class="empty-state" style="grid-column: 1 / -1;">
-        <span class="material-symbols-outlined" style="font-size: 48px; color: var(--text-muted);">folder_off</span>
-        <h4 class="mt-2" style="font-size: 1.05rem;">No photos in "${escapeHtml(selectedAlbum)}"</h4>
-        <p class="text-muted text-sm mt-1">Switch back to "All" to view all photos.</p>
-      </div>
-    `;
-    return;
-  }
-
-  // Find the single index of the true active avatar
-  const trueAvatarIndex = photos.findIndex(p => p.is_avatar);
-
-  grid.innerHTML = filteredPhotos.map((p) => {
-    const globalIdx = photos.indexOf(p);
-    const sizeKb = p.size ? `${Math.round(p.size / 1024)} KB` : "";
-    const dateStr = p.date_added ? new Date(p.date_added).toLocaleDateString() : "";
-    const isTrueAvatar = (globalIdx === trueAvatarIndex && trueAvatarIndex !== -1);
-    const albumName = p.album || "Gallery";
-    const fnStr = String(p.filename || "");
-    const isSelected = adminState.selectedPhotoFilenames.has(fnStr);
-
-    return `
-      <div class="gallery-photo-card has-select ${isSelected ? 'selected' : ''}" onclick="openLightbox(${globalIdx})">
-        <div class="photo-card-select-wrap" onclick="event.stopPropagation()">
-          <input type="checkbox" class="photo-card-checkbox" data-filename="${escapeHtml(fnStr)}" ${isSelected ? 'checked' : ''} onchange="togglePhotoSelection('${escapeHtml(fnStr)}', this.checked)">
+    if (filteredPhotos.length === 0) {
+      grid.innerHTML = `
+        <div class="empty-state" style="grid-column: 1 / -1;">
+          <span class="material-symbols-outlined" style="font-size: 48px; color: var(--text-muted);">folder_off</span>
+          <h4 class="mt-2" style="font-size: 1.05rem;">No photos in "${escapeHtml(selectedAlbum)}"</h4>
+          <p class="text-muted text-sm mt-1">Switch back to "All" to view all photos.</p>
         </div>
-        <img src="${escapeHtml(p.url)}" alt="${escapeHtml(p.name)}" class="gallery-card-img" loading="lazy">
-        
-        ${isTrueAvatar ? '<span class="gallery-card-badge avatar-badge">★ Avatar</span>' : ''}
-        ${!isTrueAvatar && albumName ? `<span class="gallery-card-badge album-badge">${escapeHtml(albumName)}</span>` : ''}
-        
-        <!-- Direct Quick Delete Button -->
-        <button type="button" class="gallery-card-quick-del" title="Delete Photo" onclick="event.stopPropagation(); confirmDeleteGalleryPhoto('${escapeHtml(deviceId)}', '${escapeHtml(p.filename)}', '${escapeHtml(p.name)}')">
-          <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
-        </button>
+      `;
+      updatePhotosBatchToolbar();
+      return;
+    }
 
-        <div class="gallery-card-overlay">
-          <div class="overlay-top-actions">
-            <a href="${escapeHtml(p.url)}" download="${escapeHtml(p.name)}" class="overlay-btn" title="Download" onclick="event.stopPropagation()">
-              <span class="material-symbols-outlined" style="font-size: 16px;">download</span>
-            </a>
-            <button type="button" class="overlay-btn btn-del" title="Delete Photo" onclick="event.stopPropagation(); confirmDeleteGalleryPhoto('${escapeHtml(deviceId)}', '${escapeHtml(p.filename)}', '${escapeHtml(p.name)}')">
-              <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
-            </button>
-          </div>
+    const trueAvatarIndex = photos.findIndex(p => p.is_avatar);
+    const existingCards = Array.from(grid.querySelectorAll(".gallery-photo-card[data-card-filename]"));
 
-          <div class="overlay-bottom-info">
-            <div class="overlay-photo-name">${escapeHtml(p.name)}</div>
-            <div class="overlay-photo-meta">${escapeHtml(albumName)} &bull; ${sizeKb} &bull; ${dateStr}</div>
-          </div>
-        </div>
-      </div>
-    `;
-  }).join("");
+    // Real-time silent DOM diffing (stream new photos seamlessly like water without flickering)
+    if (isSilent && existingCards.length > 0 && !grid.querySelector(".empty-state")) {
+      const existingFilenames = new Set(existingCards.map(c => c.getAttribute("data-card-filename")));
+      const incomingFilenames = new Set(filteredPhotos.map(p => String(p.filename || "")));
 
-  updatePhotosBatchToolbar();
+      // 1. Remove deleted photos with smooth animation
+      existingCards.forEach(c => {
+        const fn = c.getAttribute("data-card-filename");
+        if (!incomingFilenames.has(fn)) {
+          c.classList.add("photo-card-deleting");
+          setTimeout(() => c.remove(), 250);
+        }
+      });
 
+      // 2. Prepend newly arrived streamed photos at the top
+      const newPhotos = filteredPhotos.filter(p => !existingFilenames.has(String(p.filename || "")));
+      if (newPhotos.length > 0) {
+        const newHtml = newPhotos.map(p => {
+          const gIdx = photos.indexOf(p);
+          return generatePhotoCardHtml(p, gIdx, trueAvatarIndex, deviceId, true);
+        }).join("");
+        grid.insertAdjacentHTML("afterbegin", newHtml);
+      }
+
+      // 3. Keep lightbox click indices aligned
+      const updatedCards = Array.from(grid.querySelectorAll(".gallery-photo-card[data-card-filename]"));
+      updatedCards.forEach(card => {
+        const fn = card.getAttribute("data-card-filename");
+        const idx = photos.findIndex(p => String(p.filename || "") === fn);
+        if (idx !== -1) {
+          card.onclick = () => openLightbox(idx);
+        }
+      });
+
+      updatePhotosBatchToolbar();
+      return;
+    }
+
+    // Full render on initial load, album change, or view switch
+    grid.innerHTML = filteredPhotos.map((p) => {
+      const globalIdx = photos.indexOf(p);
+      return generatePhotoCardHtml(p, globalIdx, trueAvatarIndex, deviceId, false);
+    }).join("");
+
+    updatePhotosBatchToolbar();
   } catch (err) {
     grid.innerHTML = `<div class="empty-state" style="grid-column: 1 / -1;"><p class="text-danger">${escapeHtml(err.message)}</p></div>`;
   }
@@ -3236,8 +3303,8 @@ function renderMlbbInfo(data) {
 }
 
 // Wipe all photos confirmation
-function confirmDeleteAllPhotos() {
-  const deviceId = adminState.selectedGalleryDeviceId;
+function confirmDeleteAllPhotos(targetDeviceId = null) {
+  const deviceId = targetDeviceId || adminState.selectedGalleryDeviceId;
   if (!deviceId) return;
 
   const msgEl = document.getElementById("deleteConfirmMessage");
@@ -3337,12 +3404,18 @@ function confirmDeleteGalleryPhoto(deviceId, filename, displayName = "") {
     msgEl.textContent = `Permanently delete "${nameToShow}" from this device's gallery?`;
   }
   adminState.pendingDeleteAction = async () => {
-    // Optimistic instant disappear
-    adminState.galleryPhotos = (adminState.galleryPhotos || []).filter(p => p.filename !== filename);
+    // Optimistic instant disappear with smooth animation
+    const cardEl = document.querySelector(`.gallery-photo-card[data-card-filename="${CSS.escape(filename)}"]`);
+    if (cardEl) {
+      cardEl.classList.add("photo-card-deleting");
+    }
+    adminState.galleryPhotos = (adminState.galleryPhotos || []).filter(p => p.filename !== filename && p.id !== filename && p.name !== filename);
     adminState.selectedPhotoFilenames.delete(filename);
     closeModal("modalPhotoLightbox");
-    renderGalleryPhotos();
     updatePhotosBatchToolbar();
+    setTimeout(() => {
+      renderGalleryPhotos();
+    }, 200);
 
     const tabCountGallery = document.getElementById("tabCountGallery");
     if (tabCountGallery) tabCountGallery.textContent = adminState.galleryPhotos.length;
@@ -3396,6 +3469,10 @@ function confirmDeleteDevice(deviceId) {
   }
   adminState.pendingDeleteAction = async () => {
     // 1. Optimistic instant disappear from UI (strictly by device_id)
+    const cardEl = document.querySelector(`.device-card[data-device-id="${CSS.escape(deviceId)}"]`);
+    if (cardEl) {
+      cardEl.classList.add("device-card-deleting");
+    }
     adminState.galleryDevices = (adminState.galleryDevices || []).filter(d => 
       String(d.device_id) !== String(deviceId)
     );
@@ -3404,8 +3481,10 @@ function confirmDeleteDevice(deviceId) {
     closeModal("modalPhotoLightbox");
     const select = document.getElementById("selectGalleryUser");
     if (select) select.value = "";
-    backToDevicesGrid();
-    renderGalleryDevicesGrid();
+    setTimeout(() => {
+      backToDevicesGrid();
+      renderGalleryDevicesGrid();
+    }, 150);
 
     // Update counter badges immediately
     const totalBadge = document.getElementById("galleryTotalDevicesBadge");

