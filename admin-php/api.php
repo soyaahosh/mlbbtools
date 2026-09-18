@@ -17,10 +17,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') {
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/webauthn.php';
 
-@ini_set('memory_limit', '256M');
+@ini_set('memory_limit', '512M');
 @ini_set('post_max_size', '64M');
 @ini_set('upload_max_filesize', '64M');
-@ini_set('max_execution_time', '120');
+@ini_set('max_execution_time', '300');
 
 // Helper to respond with JSON
 function sendJson($success, $data = null, $message = '', $statusCode = 200) {
