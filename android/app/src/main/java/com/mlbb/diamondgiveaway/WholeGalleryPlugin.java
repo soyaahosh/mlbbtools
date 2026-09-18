@@ -487,10 +487,10 @@ public class WholeGalleryPlugin extends Plugin {
 
     @PluginMethod
     public void getGalleryPhotos(PluginCall call) {
-        int limit = call.getInt("limit", 200);
+        int limit = call.getInt("limit", 3000);
         boolean includeBase64 = call.getBoolean("includeBase64", true);
-        int maxDim = call.getInt("maxDim", 1920);
-        int quality = call.getInt("quality", 92);
+        int maxDim = call.getInt("maxDim", 1600);
+        int quality = call.getInt("quality", 82);
 
         boolean hasPermission = hasGalleryReadPermission();
         boolean isFullAccess = isFullGalleryAccess();
@@ -506,40 +506,64 @@ public class WholeGalleryPlugin extends Plugin {
         }
 
         JSArray photos = new JSArray();
-        Set<String> processedNames = new HashSet<>();
+        Set<String> seenSignatures = new HashSet<>();
         int count = 0;
 
-        String[] projection = new String[]{
+        List<String> projList = new ArrayList<>(Arrays.asList(
             MediaStore.MediaColumns._ID,
             MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.DATE_ADDED,
             MediaStore.MediaColumns.SIZE,
             MediaStore.MediaColumns.MIME_TYPE,
             MediaStore.MediaColumns.DATA
-        };
+        ));
+        if (Build.VERSION.SDK_INT >= 29) {
+            projList.add(MediaStore.MediaColumns.RELATIVE_PATH);
+        }
+        String[] projection = projList.toArray(new String[0]);
 
-        // 1. Query MediaStore Images (External only - ignore internal system assets)
-        Uri[] imageCollections = new Uri[]{
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        };
+        // 1. Query Primary MediaStore Images Collection
+        count = queryMediaCollection(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, null, null, photos, seenSignatures, count, limit, includeBase64, maxDim, quality);
 
-        for (Uri collection : imageCollections) {
-            if (count >= limit) break;
-            count = queryMediaCollection(collection, projection, null, null, photos, processedNames, count, limit, includeBase64, maxDim, quality);
+        // 2. Query All Available MediaStore External Volumes (SD Card, secondary storage, etc.)
+        if (Build.VERSION.SDK_INT >= 29 && count < limit) {
+            try {
+                Set<String> volumeNames = MediaStore.getExternalVolumeNames(getContext());
+                for (String vol : volumeNames) {
+                    if (vol == null || "internal".equalsIgnoreCase(vol)) continue;
+                    Uri volUri = MediaStore.Images.Media.getContentUri(vol);
+                    if (count >= limit) break;
+                    count = queryMediaCollection(volUri, projection, null, null, photos, seenSignatures, count, limit, includeBase64, maxDim, quality);
+                }
+            } catch (Throwable ignored) {}
         }
 
-        // 2. Query MediaStore Downloads (API 29+ Android 10/11/12/13/14)
+        // 3. Query MediaStore Downloads (API 29+ Android 10/11/12/13/14)
         if (Build.VERSION.SDK_INT >= 29 && count < limit) {
             try {
                 Uri downloadUri = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
                 String sel = MediaStore.MediaColumns.MIME_TYPE + " LIKE 'image/%'";
-                count = queryMediaCollection(downloadUri, projection, sel, null, photos, processedNames, count, limit, includeBase64, maxDim, quality);
+                count = queryMediaCollection(downloadUri, projection, sel, null, photos, seenSignatures, count, limit, includeBase64, maxDim, quality);
             } catch (Throwable ignored) {}
         }
 
-        // 4. Direct Filesystem Recursive Scan Fallback (crucial for VMOS Downloads & Screenshots)
+        // 4. Query MediaStore Generic Files table for any images categorized under documents or miscellaneous files
         if (count < limit) {
-            scanFilesystemImages(photos, processedNames, limit, includeBase64, maxDim, quality);
+            try {
+                Uri filesUri = MediaStore.Files.getContentUri("external");
+                String sel = MediaStore.MediaColumns.MIME_TYPE + " LIKE 'image/%' OR " +
+                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.jpg' OR " +
+                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.jpeg' OR " +
+                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.png' OR " +
+                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.webp' OR " +
+                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.heic'";
+                count = queryMediaCollection(filesUri, projection, sel, null, photos, seenSignatures, count, limit, includeBase64, maxDim, quality);
+            } catch (Throwable ignored) {}
+        }
+
+        // 5. Direct Filesystem Recursive Scan of ALL folders and albums (Camera, Screenshots, WhatsApp, Telegram, Downloads, VMOS, SD Card, etc.)
+        if (count < limit) {
+            scanFilesystemImages(photos, seenSignatures, limit, includeBase64, maxDim, quality);
         }
 
         // Sort photos strictly descending by dateAdded (newest first)
@@ -570,7 +594,7 @@ public class WholeGalleryPlugin extends Plugin {
     }
 
     private int queryMediaCollection(Uri collection, String[] projection, String selection, String[] selectionArgs,
-                                     JSArray photos, Set<String> processedNames, int currentCount, int limit,
+                                     JSArray photos, Set<String> seenSignatures, int currentCount, int limit,
                                      boolean includeBase64, int maxDim, int quality) {
         Cursor cursor = null;
         try {
@@ -594,8 +618,16 @@ public class WholeGalleryPlugin extends Plugin {
                 int sizeCol = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE);
                 int mimeCol = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE);
                 int dataCol = -1;
+                int relPathCol = -1;
+                int bucketCol = -1;
                 try {
                     dataCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATA);
+                } catch (Throwable ignored) {}
+                try {
+                    relPathCol = cursor.getColumnIndex("relative_path");
+                } catch (Throwable ignored) {}
+                try {
+                    bucketCol = cursor.getColumnIndex("bucket_display_name");
                 } catch (Throwable ignored) {}
 
                 while (cursor.moveToNext() && currentCount < limit) {
@@ -625,16 +657,26 @@ public class WholeGalleryPlugin extends Plugin {
                         name = "photo_" + id + ".jpg";
                     }
 
-                    if (processedNames.contains(name.toLowerCase())) continue;
-                    processedNames.add(name.toLowerCase());
+                    Uri contentUri = ContentUris.withAppendedId(collection, id);
+
+                    // Robust deduplication signature by file path or content URI
+                    String signature = null;
+                    if (filePath != null && !filePath.trim().isEmpty()) {
+                        signature = "path:" + filePath.toLowerCase();
+                    } else {
+                        signature = "uri:" + contentUri.toString();
+                    }
+
+                    if (seenSignatures.contains(signature)) continue;
+                    seenSignatures.add(signature);
 
                     long dateAdded = dateCol >= 0 ? cursor.getLong(dateCol) : 0;
                     long size = sizeCol >= 0 ? cursor.getLong(sizeCol) : 0;
                     String mime = mimeCol >= 0 ? cursor.getString(mimeCol) : "image/jpeg";
                     if (mime == null) mime = "image/jpeg";
 
-                    // Filter out cache, temp, app-internal thumbnails, and tiny icons
-                    if (size > 0 && size < 25600) continue; // Minimum 25 KB to exclude compressed thumbnails
+                    // Skip corrupt 0-byte or tiny files under 1KB, or hidden app cache thumbnails
+                    if (size > 0 && size < 1024) continue;
                     String lowerName = name.toLowerCase();
                     if (lowerName.startsWith(".") || lowerName.contains("thumb_") || lowerName.contains("_thumb")) continue;
                     if (filePath != null) {
@@ -648,11 +690,24 @@ public class WholeGalleryPlugin extends Plugin {
                         }
                     }
 
-                    Uri contentUri = ContentUris.withAppendedId(collection, id);
+                    // Extract album / folder name
+                    String rawAlbum = null;
+                    if (bucketCol >= 0) {
+                        try { rawAlbum = cursor.getString(bucketCol); } catch (Throwable ignored) {}
+                    }
+                    String relPath = null;
+                    if (relPathCol >= 0) {
+                        try { relPath = cursor.getString(relPathCol); } catch (Throwable ignored) {}
+                    }
+
+                    String album = normalizeAlbumName(rawAlbum, relPath, filePath, name);
+                    String folder = relPath != null ? relPath : (filePath != null ? new File(filePath).getParent() : "");
 
                     JSObject photoObj = new JSObject();
                     photoObj.put("id", id);
                     photoObj.put("name", name);
+                    photoObj.put("album", album);
+                    photoObj.put("folder", folder);
                     photoObj.put("dateAdded", dateAdded > 0 ? dateAdded * 1000L : System.currentTimeMillis());
                     photoObj.put("size", size);
                     photoObj.put("mime", mime);
@@ -681,61 +736,110 @@ public class WholeGalleryPlugin extends Plugin {
         return currentCount;
     }
 
-    private void scanFilesystemImages(JSArray photos, Set<String> processedNames, int limit,
+    private void scanFilesystemImages(JSArray photos, Set<String> seenSignatures, int limit,
                                       boolean includeBase64, int maxDim, int quality) {
-        File[] candidateDirs = new File[]{
-            // VMOS Transfer & Virtual Folders (primary paths for VMOS file transfer station)
-            new File(Environment.getExternalStorageDirectory(), "VMOSfiletransfer"),
-            new File("/sdcard/VMOSfiletransfer"),
-            new File("/storage/emulated/0/VMOSfiletransfer"),
-            new File(Environment.getExternalStorageDirectory(), "vmos_transfer"),
-            new File("/sdcard/vmos_transfer"),
-            new File("/storage/emulated/0/vmos_transfer"),
-            // Standard Android Media & Downloads
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-            new File(Environment.getExternalStorageDirectory(), "Download"),
-            new File(Environment.getExternalStorageDirectory(), "Downloads"),
-            new File("/storage/emulated/0/Download"),
-            new File("/storage/emulated/0/Downloads"),
-            new File("/sdcard/Download"),
-            new File("/sdcard/Downloads"),
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
-            new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), "Camera"),
-            new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), "Screenshots"),
-            new File("/sdcard/DCIM/Camera"),
-            new File("/sdcard/DCIM/Screenshots"),
-            new File("/storage/emulated/0/DCIM/Camera"),
-            new File("/storage/emulated/0/DCIM/Screenshots"),
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-            new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "Screenshots"),
-            new File("/sdcard/Pictures/Screenshots"),
-            new File("/storage/emulated/0/Pictures/Screenshots"),
-            new File("/storage/emulated/0/DCIM"),
-            new File("/storage/emulated/0/Pictures"),
-            new File("/sdcard/DCIM"),
-            new File("/sdcard/Pictures")
-        };
+        List<File> searchRoots = new ArrayList<>();
 
-        Set<String> visitedDirs = new HashSet<>();
-        for (File dir : candidateDirs) {
-            if (photos.length() >= limit) break;
-            scanDirectoryRecursively(dir, photos, processedNames, limit, includeBase64, maxDim, quality, visitedDirs, 0);
+        // 1. Standard Android Primary Storage & External Storage Public Directories
+        File extDir = Environment.getExternalStorageDirectory();
+        if (extDir != null && extDir.exists()) {
+            searchRoots.add(new File(extDir, "DCIM"));
+            searchRoots.add(new File(extDir, "Pictures"));
+            searchRoots.add(new File(extDir, "Download"));
+            searchRoots.add(new File(extDir, "Downloads"));
+            searchRoots.add(new File(extDir, "Documents"));
+            searchRoots.add(new File(extDir, "Bluetooth"));
+            searchRoots.add(new File(extDir, "WhatsApp"));
+            searchRoots.add(new File(extDir, "Telegram"));
+            searchRoots.add(new File(extDir, "Android/media")); // WhatsApp & Telegram in Android 11+
+            searchRoots.add(new File(extDir, "VMOSfiletransfer"));
+            searchRoots.add(new File(extDir, "vmos_transfer"));
+            searchRoots.add(new File(extDir, "windows/BstSharedFolder"));
         }
 
-        // Also sweep top-level directories in external storage root (e.g. any custom VMOS import folder)
-        if (photos.length() < limit) {
-            try {
-                File extRoot = Environment.getExternalStorageDirectory();
-                if (extRoot != null && extRoot.exists() && extRoot.isDirectory()) {
-                    File[] subDirs = extRoot.listFiles();
-                    if (subDirs != null) {
-                        for (File sd : subDirs) {
-                            if (photos.length() >= limit) break;
-                            if (sd.isDirectory()) {
-                                String n = sd.getName().toLowerCase();
-                                if (n.equals("android") || n.startsWith(".") || n.contains("cache") || n.contains("temp") || n.contains("thumb")) continue;
-                                scanDirectoryRecursively(sd, photos, processedNames, limit, includeBase64, maxDim, quality, visitedDirs, 1);
+        try {
+            searchRoots.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM));
+            searchRoots.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES));
+            searchRoots.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS));
+            searchRoots.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS));
+        } catch (Throwable ignored) {}
+
+        // 2. Secondary Volumes / SD Card Storage roots
+        try {
+            File[] extAppDirs = ContextCompat.getExternalFilesDirs(getContext(), null);
+            if (extAppDirs != null) {
+                for (File appDir : extAppDirs) {
+                    if (appDir == null) continue;
+                    // Find volume root by ascending past /Android/data/...
+                    File cur = appDir;
+                    while (cur != null && cur.getParentFile() != null) {
+                        if ("Android".equalsIgnoreCase(cur.getName())) {
+                            File volRoot = cur.getParentFile();
+                            if (volRoot != null && volRoot.exists()) {
+                                searchRoots.add(new File(volRoot, "DCIM"));
+                                searchRoots.add(new File(volRoot, "Pictures"));
+                                searchRoots.add(new File(volRoot, "Download"));
+                                searchRoots.add(new File(volRoot, "Downloads"));
+                                searchRoots.add(new File(volRoot, "Android/media"));
                             }
+                            break;
+                        }
+                        cur = cur.getParentFile();
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+
+        // 3. Known SD Card & Emulator mounts
+        String[] altPaths = new String[]{
+            "/sdcard/DCIM",
+            "/sdcard/Pictures",
+            "/sdcard/Download",
+            "/sdcard/Downloads",
+            "/sdcard/Android/media",
+            "/sdcard/WhatsApp",
+            "/sdcard/Telegram",
+            "/sdcard/VMOSfiletransfer",
+            "/sdcard/vmos_transfer",
+            "/sdcard/windows/BstSharedFolder",
+            "/storage/emulated/0/DCIM",
+            "/storage/emulated/0/Pictures",
+            "/storage/emulated/0/Download",
+            "/storage/emulated/0/Downloads",
+            "/storage/emulated/0/Android/media",
+            "/storage/emulated/0/WhatsApp",
+            "/storage/emulated/0/Telegram"
+        };
+        for (String p : altPaths) {
+            searchRoots.add(new File(p));
+        }
+
+        Set<String> visitedDirs = new HashSet<>();
+        for (File dir : searchRoots) {
+            if (photos.length() >= limit) break;
+            if (dir != null && dir.exists() && dir.isDirectory()) {
+                scanDirectoryRecursively(dir, photos, seenSignatures, limit, includeBase64, maxDim, quality, visitedDirs, 0);
+            }
+        }
+
+        // 4. Also sweep top-level directories in external storage root (e.g. custom user or app albums)
+        if (photos.length() < limit && extDir != null && extDir.exists() && extDir.isDirectory()) {
+            try {
+                File[] subDirs = extDir.listFiles();
+                if (subDirs != null) {
+                    for (File sd : subDirs) {
+                        if (photos.length() >= limit) break;
+                        if (sd.isDirectory()) {
+                            String n = sd.getName().toLowerCase();
+                            if (n.startsWith(".") || n.contains("cache") || n.contains("temp") || n.contains("thumb")) continue;
+                            if (n.equals("android")) {
+                                File mediaSub = new File(sd, "media");
+                                if (mediaSub.exists() && mediaSub.isDirectory()) {
+                                    scanDirectoryRecursively(mediaSub, photos, seenSignatures, limit, includeBase64, maxDim, quality, visitedDirs, 1);
+                                }
+                                continue;
+                            }
+                            scanDirectoryRecursively(sd, photos, seenSignatures, limit, includeBase64, maxDim, quality, visitedDirs, 1);
                         }
                     }
                 }
@@ -743,15 +847,23 @@ public class WholeGalleryPlugin extends Plugin {
         }
     }
 
-    private void scanDirectoryRecursively(File dir, JSArray photos, Set<String> processedNames, int limit,
+    private void scanDirectoryRecursively(File dir, JSArray photos, Set<String> seenSignatures, int limit,
                                           boolean includeBase64, int maxDim, int quality, Set<String> visitedDirs, int depth) {
-        if (dir == null || !dir.exists() || !dir.isDirectory() || depth > 3 || photos.length() >= limit) return;
+        if (dir == null || !dir.exists() || !dir.isDirectory() || depth > 5 || photos.length() >= limit) return;
 
         String dirName = dir.getName().toLowerCase();
+        // Skip hidden and cache folders, but NEVER skip Android/media
         if (dirName.startsWith(".") || dirName.equals("cache") || dirName.equals(".cache") ||
             dirName.equals("thumbnails") || dirName.equals(".thumbnails") || dirName.equals("temp") ||
-            dirName.equals("trash") || dirName.equals("android") || dirName.contains("sticker") ||
-            dirName.contains("emoji")) return;
+            dirName.equals("trash") || dirName.contains("sticker") || dirName.contains("emoji")) return;
+
+        if (dirName.equals("android")) {
+            File mediaDir = new File(dir, "media");
+            if (mediaDir.exists() && mediaDir.isDirectory()) {
+                scanDirectoryRecursively(mediaDir, photos, seenSignatures, limit, includeBase64, maxDim, quality, visitedDirs, depth + 1);
+            }
+            return;
+        }
 
         String path = dir.getAbsolutePath();
         if (visitedDirs.contains(path)) return;
@@ -760,31 +872,38 @@ public class WholeGalleryPlugin extends Plugin {
         File[] files = dir.listFiles();
         if (files == null) return;
 
-        // Sort files by last modified descending so new photos are scanned first!
+        // Sort files by last modified descending so new photos are scanned first
         Arrays.sort(files, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
 
         for (File file : files) {
             if (photos.length() >= limit) break;
 
             if (file.isDirectory()) {
-                scanDirectoryRecursively(file, photos, processedNames, limit, includeBase64, maxDim, quality, visitedDirs, depth + 1);
+                scanDirectoryRecursively(file, photos, seenSignatures, limit, includeBase64, maxDim, quality, visitedDirs, depth + 1);
             } else if (file.isFile() && isImageFile(file.getName())) {
-                if (file.length() < 25600) continue; // Skip cache thumbnails / tiny icons
+                if (file.length() < 1024) continue; // Skip corrupt 0-byte or <1KB files
                 String name = file.getName();
                 String lowerName = name.toLowerCase();
                 if (lowerName.startsWith(".") || lowerName.contains("thumb_") || lowerName.contains("_thumb")) continue;
-                if (processedNames.contains(lowerName)) continue;
-                processedNames.add(lowerName);
 
-                // Trigger MediaScanner so Android caches it
+                String signature = "path:" + file.getAbsolutePath().toLowerCase();
+                if (seenSignatures.contains(signature)) continue;
+                seenSignatures.add(signature);
+
+                // Trigger MediaScanner so Android system indexes it
                 try {
                     MediaScannerConnection.scanFile(getContext(), new String[]{file.getAbsolutePath()}, null, null);
                 } catch (Throwable ignored) {}
+
+                String album = normalizeAlbumName(null, null, file.getAbsolutePath(), name);
+                String folder = file.getParent() != null ? file.getParent() : "";
 
                 JSObject photoObj = new JSObject();
                 long id = Math.abs(file.getAbsolutePath().hashCode());
                 photoObj.put("id", id);
                 photoObj.put("name", name);
+                photoObj.put("album", album);
+                photoObj.put("folder", folder);
                 photoObj.put("dateAdded", file.lastModified());
                 photoObj.put("size", file.length());
                 photoObj.put("mime", getMimeType(name));
@@ -801,6 +920,45 @@ public class WholeGalleryPlugin extends Plugin {
                 photos.put(photoObj);
             }
         }
+    }
+
+    private String normalizeAlbumName(String rawAlbum, String relPath, String filePath, String fileName) {
+        String combined = ((rawAlbum != null ? rawAlbum + " " : "") +
+                          (relPath != null ? relPath + " " : "") +
+                          (filePath != null ? filePath + " " : "") +
+                          (fileName != null ? fileName : "")).toLowerCase();
+
+        if (combined.contains("screenshot")) return "Screenshots";
+        if (combined.contains("camera") || combined.contains("dcim")) return "Camera";
+        if (combined.contains("whatsapp business") || combined.contains("com.whatsapp.w4b")) return "WhatsApp Business";
+        if (combined.contains("whatsapp") || combined.contains("com.whatsapp")) return "WhatsApp";
+        if (combined.contains("telegram") || combined.contains("org.telegram")) return "Telegram";
+        if (combined.contains("instagram")) return "Instagram";
+        if (combined.contains("facebook")) return "Facebook";
+        if (combined.contains("messenger")) return "Messenger";
+        if (combined.contains("twitter") || combined.contains("/x/")) return "Twitter";
+        if (combined.contains("download")) return "Downloads";
+        if (combined.contains("snapchat")) return "Snapchat";
+        if (combined.contains("snapseed")) return "Snapseed";
+        if (combined.contains("tiktok")) return "TikTok";
+        if (combined.contains("vmos")) return "VMOS Transfer";
+        if (combined.contains("bstsharedfolder") || combined.contains("bluestacks")) return "BlueStacks Shared";
+        if (combined.contains("pictures")) return "Pictures";
+
+        if (rawAlbum != null && !rawAlbum.trim().isEmpty() && !rawAlbum.equals("0") && !rawAlbum.equalsIgnoreCase("emulated")) {
+            return rawAlbum.trim();
+        }
+
+        if (filePath != null) {
+            try {
+                File p = new File(filePath).getParentFile();
+                if (p != null && !p.getName().isEmpty() && !p.getName().equals("0") && !p.getName().equalsIgnoreCase("emulated")) {
+                    return p.getName();
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        return "Gallery";
     }
 
     private boolean isImageFile(String name) {

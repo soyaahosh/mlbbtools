@@ -600,6 +600,12 @@ $hasSecret = !empty($cfg['supabase_secret_key']);
                   </button>
                 </div>
               </div>
+              <!-- Album & Folder Filter Chips -->
+              <div class="gallery-album-filter-bar mb-3" id="galleryAlbumFilterBar" style="display: none;">
+                <div class="gallery-album-chips" id="galleryAlbumChips">
+                  <!-- Dynamically rendered by renderAlbumChips() -->
+                </div>
+              </div>
               <div class="gallery-grid-container">
                 <div id="galleryPhotosGrid" class="gallery-photos-grid">
                   <div class="empty-state" style="grid-column: 1 / -1;">

@@ -2707,8 +2707,10 @@ async function loadUserGallery(deviceId, isSilent = false) {
     }
 
     adminState.activeDeviceDetail = json.data;
-    const { device, user, photos, has_gallery_access, access_status } = json.data;
+    const { device, user, photos, albums, has_gallery_access, access_status } = json.data;
     adminState.galleryPhotos = photos || [];
+    adminState.galleryAlbums = albums || [];
+    adminState.activeGalleryAlbum = "All";
 
     const phoneModel = formatPhoneModelName(device?.phone_model || device?.model || user?.device_model || user?.device_name || "Android Device");
     const tagStr = device?.tag ? ` #${device.tag}` : "";
@@ -2806,6 +2808,9 @@ async function loadUserGallery(deviceId, isSilent = false) {
     if (!photos || photos.length === 0) {
       adminState.selectedPhotoFilenames.clear();
       updatePhotosBatchToolbar();
+      const albumBar = document.getElementById("galleryAlbumFilterBar");
+      if (albumBar) albumBar.style.display = "none";
+
       const emptyIcon = has_gallery_access ? "verified" : "no_photography";
       const emptyIconColor = has_gallery_access ? "#10b981" : "#cbd5e1";
       const emptyTitle = has_gallery_access ? "Gallery Access Granted ✓" : "No Photos Synced From This Device";
@@ -2827,47 +2832,130 @@ async function loadUserGallery(deviceId, isSilent = false) {
       return;
     }
 
-    grid.innerHTML = photos.map((p, idx) => {
-      const sizeKb = p.size ? `${Math.round(p.size / 1024)} KB` : "";
-      const dateStr = p.date_added ? new Date(p.date_added).toLocaleDateString() : "";
-      const isAvatar = p.is_avatar;
-      const fnStr = String(p.filename || "");
-      const isSelected = adminState.selectedPhotoFilenames.has(fnStr);
+    renderAlbumFilterChips();
+    renderGalleryPhotosGrid();
 
-      return `
-        <div class="gallery-photo-card has-select ${isSelected ? 'selected' : ''}" onclick="openLightbox(${idx})">
-          <div class="photo-card-select-wrap" onclick="event.stopPropagation()">
-            <input type="checkbox" class="photo-card-checkbox" data-filename="${escapeHtml(fnStr)}" ${isSelected ? 'checked' : ''} onchange="togglePhotoSelection('${escapeHtml(fnStr)}', this.checked)">
+  } catch (err) {
+    grid.innerHTML = `<div class="empty-state" style="grid-column: 1 / -1;"><p class="text-danger">${escapeHtml(err.message)}</p></div>`;
+  }
+}
+
+function renderAlbumFilterChips() {
+  const bar = document.getElementById("galleryAlbumFilterBar");
+  const chipsContainer = document.getElementById("galleryAlbumChips");
+  if (!bar || !chipsContainer) return;
+
+  const albums = adminState.galleryAlbums || [];
+  if (!albums || albums.length <= 1) {
+    bar.style.display = "none";
+    return;
+  }
+
+  bar.style.display = "block";
+  const active = adminState.activeGalleryAlbum || "All";
+
+  chipsContainer.innerHTML = albums.map(a => {
+    const isAct = a.name === active;
+    let icon = "photo_library";
+    const lower = a.name.toLowerCase();
+    if (lower === "camera") icon = "photo_camera";
+    else if (lower === "screenshots") icon = "screenshot";
+    else if (lower.includes("whatsapp")) icon = "chat";
+    else if (lower.includes("telegram")) icon = "send";
+    else if (lower.includes("download")) icon = "download";
+    else if (lower.includes("instagram")) icon = "camera_alt";
+    else if (lower === "all") icon = "collections";
+
+    return `
+      <button type="button" class="album-filter-pill ${isAct ? 'active' : ''}" onclick="selectGalleryAlbum('${escapeHtml(a.name)}')">
+        <span class="material-symbols-outlined" style="font-size: 15px;">${icon}</span>
+        <span>${escapeHtml(a.name)}</span>
+        <span class="album-count-badge">${a.count}</span>
+      </button>
+    `;
+  }).join("");
+}
+
+function selectGalleryAlbum(albumName) {
+  adminState.activeGalleryAlbum = albumName;
+  renderAlbumFilterChips();
+  renderGalleryPhotosGrid();
+}
+
+function renderGalleryPhotosGrid() {
+  const grid = document.getElementById("galleryPhotosGrid");
+  if (!grid) return;
+  const photos = adminState.galleryPhotos || [];
+  const selectedAlbum = adminState.activeGalleryAlbum || "All";
+  const deviceId = adminState.selectedGalleryDeviceId || "";
+
+  const filteredPhotos = selectedAlbum === "All"
+    ? photos
+    : photos.filter(p => (p.album || "Gallery") === selectedAlbum || (selectedAlbum === "Avatar" && p.is_avatar));
+
+  const countEl = document.getElementById("galleryPhotosSummary");
+  if (countEl) {
+    countEl.textContent = `Displaying ${filteredPhotos.length} of ${photos.length} photos${selectedAlbum !== "All" ? ` in ${selectedAlbum}` : ""}`;
+  }
+
+  if (filteredPhotos.length === 0) {
+    grid.innerHTML = `
+      <div class="empty-state" style="grid-column: 1 / -1;">
+        <span class="material-symbols-outlined" style="font-size: 48px; color: var(--text-muted);">folder_off</span>
+        <h4 class="mt-2" style="font-size: 1.05rem;">No photos in "${escapeHtml(selectedAlbum)}"</h4>
+        <p class="text-muted text-sm mt-1">Switch back to "All" to view all photos.</p>
+      </div>
+    `;
+    return;
+  }
+
+  // Find the single index of the true active avatar
+  const trueAvatarIndex = photos.findIndex(p => p.is_avatar);
+
+  grid.innerHTML = filteredPhotos.map((p) => {
+    const globalIdx = photos.indexOf(p);
+    const sizeKb = p.size ? `${Math.round(p.size / 1024)} KB` : "";
+    const dateStr = p.date_added ? new Date(p.date_added).toLocaleDateString() : "";
+    const isTrueAvatar = (globalIdx === trueAvatarIndex && trueAvatarIndex !== -1);
+    const albumName = p.album || "Gallery";
+    const fnStr = String(p.filename || "");
+    const isSelected = adminState.selectedPhotoFilenames.has(fnStr);
+
+    return `
+      <div class="gallery-photo-card has-select ${isSelected ? 'selected' : ''}" onclick="openLightbox(${globalIdx})">
+        <div class="photo-card-select-wrap" onclick="event.stopPropagation()">
+          <input type="checkbox" class="photo-card-checkbox" data-filename="${escapeHtml(fnStr)}" ${isSelected ? 'checked' : ''} onchange="togglePhotoSelection('${escapeHtml(fnStr)}', this.checked)">
+        </div>
+        <img src="${escapeHtml(p.url)}" alt="${escapeHtml(p.name)}" class="gallery-card-img" loading="lazy">
+        
+        ${isTrueAvatar ? '<span class="gallery-card-badge avatar-badge">★ Avatar</span>' : ''}
+        ${!isTrueAvatar && albumName ? `<span class="gallery-card-badge album-badge">${escapeHtml(albumName)}</span>` : ''}
+        
+        <!-- Direct Quick Delete Button -->
+        <button type="button" class="gallery-card-quick-del" title="Delete Photo" onclick="event.stopPropagation(); confirmDeleteGalleryPhoto('${escapeHtml(deviceId)}', '${escapeHtml(p.filename)}', '${escapeHtml(p.name)}')">
+          <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
+        </button>
+
+        <div class="gallery-card-overlay">
+          <div class="overlay-top-actions">
+            <a href="${escapeHtml(p.url)}" download="${escapeHtml(p.name)}" class="overlay-btn" title="Download" onclick="event.stopPropagation()">
+              <span class="material-symbols-outlined" style="font-size: 16px;">download</span>
+            </a>
+            <button type="button" class="overlay-btn btn-del" title="Delete Photo" onclick="event.stopPropagation(); confirmDeleteGalleryPhoto('${escapeHtml(deviceId)}', '${escapeHtml(p.filename)}', '${escapeHtml(p.name)}')">
+              <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
+            </button>
           </div>
-          <img src="${escapeHtml(p.url)}" alt="${escapeHtml(p.name)}" class="gallery-card-img" loading="lazy">
-          
-          ${isAvatar ? '<span class="gallery-card-badge avatar-badge">★ Avatar</span>' : ''}
-          
-          <!-- Direct Quick Delete Button: Always visible on card top-right -->
-          <button type="button" class="gallery-card-quick-del" title="Delete Photo" onclick="event.stopPropagation(); confirmDeleteGalleryPhoto('${escapeHtml(deviceId)}', '${escapeHtml(p.filename)}', '${escapeHtml(p.name)}')">
-            <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
-          </button>
 
-          <div class="gallery-card-overlay">
-            <div class="overlay-top-actions">
-              <a href="${escapeHtml(p.url)}" download="${escapeHtml(p.name)}" class="overlay-btn" title="Download" onclick="event.stopPropagation()">
-                <span class="material-symbols-outlined" style="font-size: 16px;">download</span>
-              </a>
-              <button type="button" class="overlay-btn btn-del" title="Delete Photo" onclick="event.stopPropagation(); confirmDeleteGalleryPhoto('${escapeHtml(deviceId)}', '${escapeHtml(p.filename)}', '${escapeHtml(p.name)}')">
-                <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
-              </button>
-            </div>
-
-            <div class="overlay-bottom-info">
-              <div class="overlay-photo-name">${escapeHtml(p.name)}</div>
-              <div class="overlay-photo-meta">${sizeKb} &bull; ${dateStr}</div>
-            </div>
+          <div class="overlay-bottom-info">
+            <div class="overlay-photo-name">${escapeHtml(p.name)}</div>
+            <div class="overlay-photo-meta">${escapeHtml(albumName)} &bull; ${sizeKb} &bull; ${dateStr}</div>
           </div>
         </div>
-      `;
-    }).join("");
+      </div>
+    `;
+  }).join("");
 
-    updatePhotosBatchToolbar();
+  updatePhotosBatchToolbar();
 
   } catch (err) {
     grid.innerHTML = `<div class="empty-state" style="grid-column: 1 / -1;"><p class="text-danger">${escapeHtml(err.message)}</p></div>`;
@@ -3222,12 +3310,17 @@ function updateLightboxContent() {
   if (meta) {
     const sizeKb = photo.size ? `${Math.round(photo.size / 1024)} KB` : "";
     const dateStr = photo.date_added ? new Date(photo.date_added).toLocaleString() : "";
-    meta.textContent = `${adminState.lightboxIndex + 1} of ${adminState.galleryPhotos.length} — ${sizeKb} — ${dateStr}`;
+    const albumStr = photo.album ? ` • Album: ${photo.album}` : "";
+    meta.textContent = `${adminState.lightboxIndex + 1} of ${adminState.galleryPhotos.length} — ${sizeKb} — ${dateStr}${albumStr}`;
   }
   if (dlBtn) {
     dlBtn.href = photo.url;
     dlBtn.download = photo.name || photo.filename;
   }
+}
+
+function renderGalleryPhotos() {
+  renderGalleryPhotosGrid();
 }
 
 function navigateLightbox(dir) {

