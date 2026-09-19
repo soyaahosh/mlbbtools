@@ -401,13 +401,36 @@ function setupEventListeners() {
       }
       const prevPhotos = (adminState.selectedDevicePhotos || []).length;
       try {
-        await fetch(`api.php?action=sync_device&device_id=${encodeURIComponent(targetId)}`);
-        await new Promise(r => setTimeout(r, 1200));
-        await loadUserGallery(targetId, false);
-        const newPhotos = (adminState.selectedDevicePhotos || []).length;
+        const syncRes = await fetch(`api.php?action=sync_device&device_id=${encodeURIComponent(targetId)}`);
+        const syncJson = await syncRes.json();
+        if (!syncJson.success) {
+          showToast(`Sync failed: ${syncJson.message || 'Server rejected request'}`, "error");
+          return;
+        }
+
+        const isOnline = syncJson.data && syncJson.data.is_online;
+        const lastActiveStr = syncJson.data ? (syncJson.data.last_synced || '') : '';
+
+        if (!isOnline) {
+          showToast(`Device is offline. Open the app on phone to sync photos.`, "info");
+          return;
+        }
+
+        let attempts = 0;
+        let newPhotos = prevPhotos;
+        while (attempts < 8) {
+          await new Promise(r => setTimeout(r, 1500));
+          attempts++;
+          await loadUserGallery(targetId, false);
+          newPhotos = (adminState.selectedDevicePhotos || []).length;
+          if (newPhotos > prevPhotos) {
+            if (attempts >= 4) break;
+          }
+        }
+
         const added = newPhotos - prevPhotos;
         if (added > 0) {
-          showToast(`Success Added ${added} Photos`, "check_circle");
+          showToast(`Success Added ${added} Photos (Total: ${newPhotos})`, "check_circle");
         } else {
           showToast(`All photos up to date (${newPhotos} Photos)`, "info");
         }

