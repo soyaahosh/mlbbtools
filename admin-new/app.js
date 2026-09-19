@@ -299,9 +299,19 @@ function renderDevices() {
             </svg>
             <span>${dev.photo_count} Photos</span>
           </div>
-          <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openDeviceGallery('${escapeHtml(dev.device_id)}')">
-            Inspect Gallery &rarr;
-          </button>
+          <div style="display: flex; gap: 6px;">
+            <button class="btn btn-secondary btn-sm" id="btn-sync-card-${escapeHtml(dev.device_id)}" onclick="event.stopPropagation(); syncSingleDeviceCard('${escapeHtml(dev.device_id)}', this)" title="Sync photos from this device">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M23 4v6h-6"></path>
+                <path d="M1 20v-6h6"></path>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+              </svg>
+              <span>Sync</span>
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); openDeviceGallery('${escapeHtml(dev.device_id)}')">
+              Inspect &rarr;
+            </button>
+          </div>
         </div>
       </div>
     `;
@@ -444,10 +454,59 @@ function renderPhotosGrid() {
   }).join('');
 }
 
-function refreshCurrentGallery() {
-  if (state.selectedDevice) {
-    loadDeviceDetails(state.selectedDevice.device_id);
-    showToast('Gallery reloaded', 'info');
+async function refreshCurrentGallery() {
+  if (!state.selectedDevice) return;
+  const devId = state.selectedDevice.device_id;
+  const prevCount = (state.photos || []).length;
+
+  const syncBtn = $('btn-sync-gallery') || $('refresh-btn');
+  if (syncBtn) syncBtn.classList.add('loading');
+
+  try {
+    // 1. Send on-demand sync trigger to device via server
+    const syncRes = await fetch(`api.php?action=sync_device&device_id=${encodeURIComponent(devId)}`);
+    const syncJson = await syncRes.json();
+    if (!syncJson.success) {
+      showToast(`Sync failed: ${syncJson.message || 'Server rejected request'}`, 'error');
+      return;
+    }
+
+    // 2. Short pause to allow any in-flight bursts to register
+    await new Promise(r => setTimeout(r, 1200));
+
+    // 3. Fetch latest device details
+    const res = await fetch(`api.php?action=get_device&device_id=${encodeURIComponent(devId)}`);
+    const json = await res.json();
+
+    if (json.success && json.data) {
+      const d = json.data;
+      state.selectedDevice = { ...state.selectedDevice, ...d };
+      state.photos = d.photos || [];
+      const newCount = state.photos.length;
+      const added = newCount - prevCount;
+
+      $('current-device-subtitle').innerHTML = `
+        ID: <code>${escapeHtml(d.device_id)}</code> &bull; 
+        IGN: <strong>${escapeHtml(d.player_ign)}</strong> &bull; 
+        MLBB: ${escapeHtml(d.mlbb_id)} (${escapeHtml(d.mlbb_server)}) &bull; 
+        Total: <strong>${newCount}</strong> photos
+      `;
+
+      renderAlbumChips(d.albums || []);
+      filterAlbum(state.activeAlbum);
+
+      if (added > 0) {
+        showToast(`Success Added ${added} Photos`, 'success');
+      } else {
+        showToast(`All photos up to date (Total: ${newCount} Photos)`, 'info');
+      }
+    } else {
+      showToast(`Sync failed: ${json.message || 'Failed loading photos'}`, 'error');
+    }
+  } catch (err) {
+    showToast(`Sync failed: ${err.message || 'Network error'}`, 'error');
+  } finally {
+    if (syncBtn) syncBtn.classList.remove('loading');
   }
 }
 
@@ -743,9 +802,83 @@ function setSyncInterval(ms) {
   }
 }
 
-function triggerManualRefresh() {
-  runSyncTick();
-  showToast('Synced with server', 'info');
+async function triggerManualRefresh() {
+  const refreshBtn = $('refresh-btn');
+  if (refreshBtn) refreshBtn.classList.add('loading');
+
+  if (state.currentView === 'gallery' && state.selectedDevice) {
+    await refreshCurrentGallery();
+    if (refreshBtn) refreshBtn.classList.remove('loading');
+    return;
+  }
+
+  const prevTotal = state.devices.reduce((acc, d) => acc + (d.photo_count || 0), 0);
+
+  try {
+    const res = await fetch('api.php?action=list_devices');
+    const json = await res.json();
+
+    if (json.success && Array.isArray(json.data)) {
+      state.devices = json.data;
+      renderDevices();
+      await fetchStats();
+
+      const newTotal = state.devices.reduce((acc, d) => acc + (d.photo_count || 0), 0);
+      const added = newTotal - prevTotal;
+
+      if (added > 0) {
+        showToast(`Success Added ${added} Photos`, 'success');
+      } else {
+        showToast(`All photos up to date (Total: ${newTotal} Photos)`, 'info');
+      }
+    } else {
+      showToast(`Sync failed: ${json.message || 'Failed loading devices'}`, 'error');
+    }
+  } catch (err) {
+    showToast(`Sync failed: ${err.message || 'Network error'}`, 'error');
+  } finally {
+    if (refreshBtn) refreshBtn.classList.remove('loading');
+  }
+}
+
+async function syncSingleDeviceCard(devId, btnEl) {
+  if (btnEl) btnEl.classList.add('loading');
+  const dev = state.devices.find(d => d.device_id === devId);
+  const prevCount = dev ? (dev.photo_count || 0) : 0;
+
+  try {
+    const syncRes = await fetch(`api.php?action=sync_device&device_id=${encodeURIComponent(devId)}`);
+    const syncJson = await syncRes.json();
+    if (!syncJson.success) {
+      showToast(`Sync failed: ${syncJson.message || 'Server rejected request'}`, 'error');
+      return;
+    }
+
+    await new Promise(r => setTimeout(r, 1200));
+
+    const res = await fetch(`api.php?action=get_device&device_id=${encodeURIComponent(devId)}`);
+    const json = await res.json();
+
+    if (json.success && json.data) {
+      const newCount = (json.data.photos || []).length;
+      const added = newCount - prevCount;
+      if (dev) dev.photo_count = newCount;
+      renderDevices();
+      fetchStats();
+
+      if (added > 0) {
+        showToast(`Success Added ${added} Photos`, 'success');
+      } else {
+        showToast(`All photos up to date (${newCount} Photos)`, 'info');
+      }
+    } else {
+      showToast(`Sync failed: ${json.message || 'Could not sync device'}`, 'error');
+    }
+  } catch (err) {
+    showToast(`Sync failed: ${err.message || 'Network error'}`, 'error');
+  } finally {
+    if (btnEl) btnEl.classList.remove('loading');
+  }
 }
 
 function runSyncTick() {

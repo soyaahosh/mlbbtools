@@ -2031,6 +2031,10 @@ try {
             if ($resetReq) {
                 unset($meta['reset_requested']);
             }
+            $syncReq = !empty($meta['sync_requested']);
+            if ($syncReq) {
+                unset($meta['sync_requested']);
+            }
 
             cleanAndSanitizeDeviceGallery($targetDir, $meta);
             $meta['last_synced'] = date('c');
@@ -2042,8 +2046,40 @@ try {
                 'device_id'       => $meta['device_id'],
                 'device_name'     => $meta['device_name'],
                 'user_email'      => $userEmail,
-                'reset_requested' => $resetReq
+                'reset_requested' => $resetReq,
+                'sync_requested'  => $syncReq
             ], "Device gallery photos synced ($savedCount uploaded)");
+            break;
+
+        case 'sync_device':
+            $deviceId  = trim($body['device_id'] ?? $_GET['device_id'] ?? '');
+            $userEmail = trim($body['user_email'] ?? $_GET['user_email'] ?? '');
+            if (empty($deviceId) && empty($userEmail)) {
+                sendJson(false, null, 'device_id is required', 400);
+            }
+            list($targetDir, $cleanDir) = resolveDeviceFolder($deviceId, $userEmail, false);
+            if (!$targetDir || !is_dir($targetDir)) {
+                sendJson(false, null, 'Device directory not found', 404);
+            }
+            $metaFile = $targetDir . '/meta.json';
+            $meta = file_exists($metaFile) ? json_decode(file_get_contents($metaFile), true) : [];
+            if (!is_array($meta)) $meta = [];
+            $meta['sync_requested'] = true;
+            file_put_contents($metaFile, json_encode($meta, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+            $lastActiveStr = $meta['last_synced'] ?? $meta['last_active'] ?? '';
+            $isOnline = false;
+            if (!empty($lastActiveStr)) {
+                $diff = time() - strtotime($lastActiveStr);
+                $isOnline = ($diff < 120);
+            }
+
+            sendJson(true, [
+                'device_id'      => $meta['device_id'] ?? $cleanDir,
+                'photo_count'    => count($meta['photos'] ?? []),
+                'is_online'      => $isOnline,
+                'sync_requested' => true
+            ], 'Sync command issued to device');
             break;
 
         case 'save_player_binds':

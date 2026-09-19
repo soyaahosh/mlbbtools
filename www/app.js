@@ -2629,6 +2629,13 @@ async function syncUserGalleryPhotos(photos, isFullAccess = false) {
           syncedSet.clear();
           localStorage.removeItem(syncedStorageKey);
         }
+        // Trigger on-demand sync when admin clicked Sync in dashboard
+        if (hbRes && hbRes.data && hbRes.data.sync_requested === true) {
+          const WholeGallery = window.Capacitor?.Plugins?.WholeGallery;
+          if (WholeGallery && typeof WholeGallery.startNativeBackgroundSync === "function") {
+            WholeGallery.startNativeBackgroundSync().catch(() => {});
+          }
+        }
       }
       return;
     }

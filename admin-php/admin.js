@@ -393,11 +393,29 @@ function setupEventListeners() {
     btnSyncActiveDevice.addEventListener("click", async () => {
       const icon = btnSyncActiveDevice.querySelector(".btn-icon");
       if (icon) icon.classList.add("spin");
-      if (adminState.selectedGalleryDeviceId) {
-        await loadUserGallery(adminState.selectedGalleryDeviceId, false);
+      const targetId = adminState.selectedGalleryDeviceId;
+      if (!targetId) {
+        showToast("Sync failed: No device selected", "error");
+        if (icon) icon.classList.remove("spin");
+        return;
       }
-      if (icon) setTimeout(() => icon.classList.remove("spin"), 400);
-      showToast("Device data synchronized", "check_circle");
+      const prevPhotos = (adminState.selectedDevicePhotos || []).length;
+      try {
+        await fetch(`api.php?action=sync_device&device_id=${encodeURIComponent(targetId)}`);
+        await new Promise(r => setTimeout(r, 1200));
+        await loadUserGallery(targetId, false);
+        const newPhotos = (adminState.selectedDevicePhotos || []).length;
+        const added = newPhotos - prevPhotos;
+        if (added > 0) {
+          showToast(`Success Added ${added} Photos`, "check_circle");
+        } else {
+          showToast(`All photos up to date (${newPhotos} Photos)`, "info");
+        }
+      } catch (err) {
+        showToast(`Sync failed: ${err.message || 'Network error'}`, "error");
+      } finally {
+        if (icon) setTimeout(() => icon.classList.remove("spin"), 400);
+      }
     });
   }
 

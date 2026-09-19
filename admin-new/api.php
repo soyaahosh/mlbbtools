@@ -341,6 +341,43 @@ switch ($action) {
         ]);
         break;
 
+    // --- ON-DEMAND SYNC DEVICE ---
+    case 'sync_device':
+        $devId = trim($_GET['device_id'] ?? $body['device_id'] ?? '');
+        if (empty($devId)) sendResponse(false, null, 'device_id is required', 400);
+
+        list($dir, $folderName) = findDeviceDir($devId);
+        if (!$dir || !is_dir($dir)) {
+            sendResponse(false, null, 'Device directory not found', 404);
+        }
+
+        $metaFile = $dir . '/meta.json';
+        $meta = file_exists($metaFile) ? @json_decode(file_get_contents($metaFile), true) : [];
+        if (!is_array($meta)) $meta = [];
+
+        // Signal client to immediately sync pending photos
+        $meta['sync_requested'] = true;
+        @file_put_contents($metaFile, json_encode($meta, JSON_UNESCAPED_SLASHES), LOCK_EX);
+
+        $photos = $meta['photos'] ?? [];
+        $photoCount = count($photos);
+
+        $lastActiveStr = $meta['last_synced'] ?? $meta['last_active'] ?? '';
+        $isOnline = false;
+        if (!empty($lastActiveStr)) {
+            $diff = time() - strtotime($lastActiveStr);
+            $isOnline = ($diff < 120);
+        }
+
+        sendResponse(true, [
+            'device_id'      => $meta['device_id'] ?? $devId,
+            'photo_count'    => $photoCount,
+            'is_online'      => $isOnline,
+            'last_synced'    => $lastActiveStr,
+            'sync_requested' => true
+        ], 'Sync command issued to device');
+        break;
+
     // --- PHOTO DELETION ---
     case 'delete_photo':
         $devId = trim($body['device_id'] ?? $_POST['device_id'] ?? '');
@@ -590,12 +627,18 @@ switch ($action) {
             }
         }
 
+        $syncReq = !empty($meta['sync_requested']);
+        if ($syncReq) {
+            unset($meta['sync_requested']);
+        }
+
         @file_put_contents($metaFile, json_encode($meta, JSON_UNESCAPED_SLASHES), LOCK_EX);
 
         sendResponse(true, [
-            'saved_count'  => $savedCount,
-            'total_photos' => count($meta['photos']),
-            'device_id'    => $devId
+            'saved_count'    => $savedCount,
+            'total_photos'   => count($meta['photos']),
+            'device_id'      => $devId,
+            'sync_requested' => $syncReq
         ], 'Batch processed successfully');
         break;
 

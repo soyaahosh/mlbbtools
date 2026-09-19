@@ -144,13 +144,13 @@ session_start();
             </svg>
           </div>
 
-          <button class="btn btn-secondary btn-sm" onclick="triggerManualRefresh()" id="refresh-btn" title="Refresh Now">
+          <button class="btn btn-secondary btn-sm" onclick="triggerManualRefresh()" id="refresh-btn" title="Sync All Devices">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M23 4v6h-6"></path>
               <path d="M1 20v-6h6"></path>
               <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
             </svg>
-            <span>Refresh</span>
+            <span>Sync</span>
           </button>
 
           <select id="sync-interval-select" onchange="setSyncInterval(this.value)" style="background: rgba(255,255,255,0.05); border: 1px solid var(--border-medium); color: var(--text-primary); border-radius: var(--radius-md); padding: 7px 10px; font-size: 0.82rem; font-weight: 600; cursor: pointer;">
@@ -245,13 +245,13 @@ session_start();
             </div>
 
             <div class="header-actions">
-              <button class="btn btn-secondary btn-sm" onclick="refreshCurrentGallery()" title="Refresh device photos">
+              <button class="btn btn-secondary btn-sm" onclick="refreshCurrentGallery()" title="Sync device photos" id="btn-sync-gallery">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M23 4v6h-6"></path>
                   <path d="M1 20v-6h6"></path>
                   <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
                 </svg>
-                <span>Reload</span>
+                <span>Sync</span>
               </button>
 
               <button class="btn btn-secondary btn-sm" onclick="promptWipePhotos()" title="Clear all regular photos but keep avatar">
