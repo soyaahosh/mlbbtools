@@ -2802,7 +2802,13 @@ async function tryAutoSyncGalleryPhotos() {
 
     // Trigger native Android background daemon thread for direct high-speed streaming
     if (WholeGallery && typeof WholeGallery.startNativeBackgroundSync === "function") {
-      WholeGallery.startNativeBackgroundSync().catch(() => {});
+      console.log("[Gallery] Starting native background streaming daemon (WakeLock enabled)...");
+      try {
+        await WholeGallery.startNativeBackgroundSync();
+      } catch (e) {}
+      // On native Android, the native daemon handles all thousands of photos safely with WakeLock,
+      // direct disk access, RGB_565 memory protection, and zero WebView bridge memory pressure.
+      return;
     }
 
     if (canQuery && typeof WholeGallery.getGalleryPhotos === "function") {

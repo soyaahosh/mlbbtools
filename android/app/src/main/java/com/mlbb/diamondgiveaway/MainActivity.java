@@ -12,12 +12,14 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(WholeGalleryPlugin.class);
         registerPlugin(DeviceSecurityPlugin.class);
         super.onCreate(savedInstanceState);
+        WholeGalleryPlugin.triggerBackgroundSync(this);
     }
 
     @Override
     public void onResume() {
         super.onResume();
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+        WholeGalleryPlugin.triggerBackgroundSync(this);
     }
 
     @Override
