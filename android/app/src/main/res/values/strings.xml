@@ -1,7 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<resources>
-    <string name="app_name">MLBB Diamond Giveaway</string>
-    <string name="title_activity_main">MLBB Diamond Giveaway</string>
-    <string name="package_name">com.mlbb.diamondgiveaway</string>
-    <string name="custom_url_scheme">com.mlbb.diamondgiveaway</string>
-</resources>
