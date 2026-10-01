@@ -6,7 +6,3 @@
     Require all denied
 </Files>
 # Block direct execution of uploaded files (they are served as static images)
-<Directory "uploads">
-    php_flag engine off
-    AddType text/plain .php .phtml
-</Directory>
