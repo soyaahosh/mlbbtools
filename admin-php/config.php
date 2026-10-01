@@ -37,3 +37,5 @@ $config = [
  * IMPORTANT: generate your own hash and paste it above:
  *   php -r "echo password_hash('your-password', PASSWORD_BCRYPT), PHP_EOL;"
  */
+
+return $config;
