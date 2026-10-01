@@ -1,0 +1,6 @@
+# Block PHP execution in gallery uploads (served as static images)
+php_flag engine off
+AddType text/plain .php .phtml .phar
+<FilesMatch "\.(php|phtml|phar)$">
+    Require all denied
+</FilesMatch>
