@@ -10,7 +10,15 @@ Needs: replay_data.json, python3-zstandard
 """
 import socket, struct, json, sys, time, re
 
-VERSION = "v2.2"
+VERSION = "v2.3"
+
+def do_handshake(server, port, handshake_msgs):
+    s = socket.create_connection((server, port), timeout=10)
+    for hx in handshake_msgs:
+        s.sendall(bytes.fromhex(hx))
+        time.sleep(0.15)
+    resp = recv_all(s, timeout=5)
+    return s, resp
 
 def parse_search_profile(blob, target_id):
     """Extract profile fields from decompressed search response."""
@@ -149,12 +157,7 @@ def main():
     data = json.load(open('replay_data.json'))
     print(f"[+] target: {target}")
 
-    s = socket.create_connection((data['server'], data['port']), timeout=10)
-    print("[+] handshake ...")
-    for hx in data['handshake']:
-        s.sendall(bytes.fromhex(hx))
-        time.sleep(0.15)
-    resp = recv_all(s, timeout=5)
+    s, resp = do_handshake(data['server'], data['port'], data['handshake'])
     print(f"[+] handshake ok ({len(resp)} bytes back)")
     if not resp:
         print("[-] no handshake response; token may be expired")
@@ -198,6 +201,16 @@ def main():
     print(f"[+] visit req ({len(vreq)}B): {vreq.hex()}")
     s.sendall(vreq)
     resp = recv_all(s, timeout=10)
+    if len(resp) == 0:
+        # search may have disturbed session state; retry visit on fresh connection
+        print("[+] visit got 0 bytes, retrying on fresh connection ...")
+        s.close()
+        s, hresp = do_handshake(data['server'], data['port'], data['handshake'])
+        if not hresp:
+            print("[-] fresh handshake failed")
+            return
+        s.sendall(vreq)
+        resp = recv_all(s, timeout=10)
     s.close()
     print(f"[+] visit response: {len(resp)} bytes")
     found = False
