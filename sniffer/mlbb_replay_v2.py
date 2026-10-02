@@ -10,7 +10,38 @@ Needs: replay_data.json, python3-zstandard
 """
 import socket, struct, json, sys, time, re
 
-VERSION = "v2.1"
+VERSION = "v2.2"
+
+def parse_search_profile(blob, target_id):
+    """Extract profile fields from decompressed search response."""
+    prof = {'id': target_id}
+    zone = find_zone(blob, target_id)
+    if zone:
+        prof['zone'] = zone
+    # avatar / photo urls
+    urls = re.findall(rb'dist/(?:face|photo)/[A-Za-z0-9/_\-.]+', blob)
+    if urls:
+        prof['avatar'] = urls[0].decode()
+        photos = [u.decode() for u in urls[1:4]]
+        if photos:
+            prof['photos'] = photos
+    # readable strings: pick likely name/bio (skip urls, versions)
+    strs = re.findall(rb'[\x20-\x7e]{3,}', blob)
+    cands = []
+    for s in strs:
+        t = s.decode()
+        if 'dist/' in t or t.startswith('2.'):
+            continue
+        if re.fullmatch(r'[A-Za-z0-9_~.\- ]+', t) and len(t) <= 40:
+            cands.append(t)
+    # name is usually short; bio longer. Heuristic: first short != requester noise
+    seen = set()
+    names = [c for c in cands if c not in seen and not seen.add(c)]
+    if names:
+        prof['name'] = names[0]
+        if len(names) > 1:
+            prof['bio'] = names[1]
+    return prof
 
 def encode_varint(n):
     out = b''
@@ -141,8 +172,11 @@ def main():
         print("[-] pip install zstandard")
         return
     zone = None
+    search_blob = None
     for typ, m in frame_msgs(resp):
         blob = dctx.decompress(m, max_output_size=50_000_000) if typ == 0x10 else m
+        if search_blob is None and typ == 0x10 and len(blob) > 100:
+            search_blob = blob
         z = find_zone(blob, target)
         if z:
             zone = z
@@ -151,6 +185,14 @@ def main():
         print("[-] zone not found in search response (invalid ID?)")
         return
     print(f"[+] zone = {zone}")
+    if search_blob:
+        prof = parse_search_profile(search_blob, target)
+        print("[+] profile from search:")
+        for k, v in prof.items():
+            print(f"    {k}: {v}")
+        with open(f'profile_{target}.json', 'w') as f:
+            json.dump(prof, f, indent=2)
+        print(f"[+] saved profile_{target}.json")
 
     vreq = build_visit_request(target, zone, data['profile_request'])
     print(f"[+] visit req ({len(vreq)}B): {vreq.hex()}")
