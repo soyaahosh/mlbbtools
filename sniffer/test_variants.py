@@ -5,28 +5,22 @@ sys.path.insert(0, '.')
 from mlbb_replay_v2 import encode_varint, frame_msgs, recv_all, do_handshake
 
 def build_visit_variant(target_id, zone, template_hex, extra_hex):
-    """Build visit with extra flag bytes (e.g. '4200' or '4c00')."""
-    raw = bytes.fromhex(template_hex)
-    body = bytearray(raw[4:])
-    j45 = body.find(b'\x45')
-    inner_start = j45 + 2
-    old_len = body[j45+1]
-    inner = bytearray(body[inner_start:inner_start+old_len])
-    trailer = bytes(body[inner_start+old_len:])
-    # find 70 00 <id>, then 01 <zone>, then 80
-    tid = encode_varint(target_id)
-    j = inner.find(b'\x70\x00' + tid) + 2 + len(tid)
-    assert inner[j:j+1] == b'\x01'
-    k = j + 1
-    e = k
-    while inner[e] & 0x80:
-        e += 1
-    e += 1
-    # e now points at 0x80 terminator; insert extra before it
-    new_inner = inner[:e] + bytes.fromhex(extra_hex) + inner[e:]
-    new_body = bytes(body[:j45]) + b'\x45' + bytes([len(new_inner)]) + bytes(new_inner) + trailer
-    total = 4 + len(new_body)
-    return bytes([0x00, (total >> 16) & 0xff, (total >> 8) & 0xff, total & 0xff]) + new_body
+    """Build visit with extra flag bytes (e.g. '4200' or '4c00').
+    Uses build_visit_request for correct ID/zone, then inserts extra before final 80."""
+    from mlbb_replay_v2 import build_visit_request
+    base = bytearray(build_visit_request(target_id, zone, template_hex))
+    # base ends with: ... 01 <zone varint> 80 80 ; insert extra before last 80 80
+    assert base[-2:] == b'\x80\x80', f"unexpected tail: {base[-4:].hex()}"
+    new = bytes(base[:-2]) + bytes.fromhex(extra_hex) + b'\x80\x80'
+    # fixup frame length (byte 1-3)
+    total = len(new)
+    new = bytes([new[0], (total >> 16) & 0xff, (total >> 8) & 0xff, total & 0xff]) + new[4:]
+    # fixup inner 45 <len>
+    j45 = new.find(b'\x45')
+    inner_len = new[j45+1]
+    new_inner_len = inner_len + len(bytes.fromhex(extra_hex))
+    new = new[:j45+1] + bytes([new_inner_len]) + new[j45+2:]
+    return new
 
 def main():
     target = 776114101
