@@ -19,7 +19,7 @@ $config = [
     //      and paste it as 'admin_password_hash' below.
     'admin_password_hash' => $envPassword
         ? password_hash($envPassword, PASSWORD_BCRYPT)
-        : '$2y$10$INVALIDPLACEHOLDERINVALIDPLACEHOLDERINVA',
+        : '$2y$10$vj.OsHNuPneGwI2RLSDPI.ge3oHVEl2jAcCeiMJqHgM/KFGyMu1XK',
 
     // Storage
     'gallery_dir'        => __DIR__ . '/uploads/gallery',
