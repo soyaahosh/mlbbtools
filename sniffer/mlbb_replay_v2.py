@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MLBB profile replay v2 — two-step flow (no hardcoded zone)
+MLBB profile replay v2.1 — two-step flow (no hardcoded zone)
 1. Handshake (replayed)
 2. SEARCH request (70 40) for target ID -> response contains zone
 3. PROFILE VISIT request (70 00) with target ID + zone -> detailed data
@@ -9,6 +9,8 @@ Usage: python3 mlbb_replay_v2.py <target_id>
 Needs: replay_data.json, python3-zstandard
 """
 import socket, struct, json, sys, time, re
+
+VERSION = "v2.1"
 
 def encode_varint(n):
     out = b''
@@ -41,7 +43,6 @@ def frame_msgs(blob):
     return msgs
 
 def swap_varint_after(body, marker, target_id):
-    """Replace varint following marker bytes; return new body."""
     i = body.find(marker)
     assert i >= 0, 'marker not found'
     j = i + len(marker)
@@ -60,7 +61,6 @@ def build_search_request(target_id, template_hex):
     old_len = body[j45+1]
     inner = bytearray(body[inner_start:inner_start+old_len])
     trailer = bytes(body[inner_start+old_len:])
-    # inner: 70 40 00 01 <varint:id> 80
     new_inner = swap_varint_after(inner, b'\x70\x40\x00\x01', target_id)
     new_body = bytes(body[:j45]) + b'\x45' + bytes([len(new_inner)]) + bytes(new_inner) + trailer
     total = 4 + len(new_body)
@@ -75,9 +75,7 @@ def build_visit_request(target_id, zone, template_hex):
     old_len = body[j45+1]
     inner = bytearray(body[inner_start:inner_start+old_len])
     trailer = bytes(body[inner_start+old_len:])
-    # inner: 70 00 <varint:id> 01 <varint:zone> 80
     new_inner = swap_varint_after(inner, b'\x70\x00', target_id)
-    # zone follows: find 01 <varint> after the id
     j = new_inner.find(encode_varint(target_id)) + len(encode_varint(target_id))
     assert new_inner[j:j+1] == b'\x01', 'zone tag mismatch'
     k = j + 1
@@ -91,7 +89,6 @@ def build_visit_request(target_id, zone, template_hex):
     return bytes([0x00, (total >> 16) & 0xff, (total >> 8) & 0xff, total & 0xff]) + new_body
 
 def find_zone(blob, target_id):
-    """In decompressed search response: 70 00 <varint:id> 01 <varint:zone>"""
     pat = b'\x70\x00' + encode_varint(target_id) + b'\x01'
     i = blob.find(pat)
     if i < 0:
@@ -113,6 +110,7 @@ def recv_all(s, timeout=8):
     return data
 
 def main():
+    print(f"mlbb_replay {VERSION}")
     if len(sys.argv) < 2:
         print("usage: python3 mlbb_replay_v2.py <target_id>")
         sys.exit(1)
@@ -131,7 +129,6 @@ def main():
         print("[-] no handshake response; token may be expired")
         return
 
-    # step 1: search
     sreq = build_search_request(target, data['search_request'])
     print(f"[+] search req ({len(sreq)}B): {sreq.hex()}")
     s.sendall(sreq)
@@ -152,11 +149,9 @@ def main():
             break
     if zone is None:
         print("[-] zone not found in search response (invalid ID?)")
-        print(f"    raw: {resp[:100].hex()}")
         return
     print(f"[+] zone = {zone}")
 
-    # step 2: profile visit with zone
     vreq = build_visit_request(target, zone, data['profile_request'])
     print(f"[+] visit req ({len(vreq)}B): {vreq.hex()}")
     s.sendall(vreq)
