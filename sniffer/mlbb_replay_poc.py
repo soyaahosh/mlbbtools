@@ -115,17 +115,20 @@ def main():
                 blob = dctx.decompress(m, max_output_size=50_000_000)
             except Exception:
                 continue
-        # look for profile-ish strings
-        strs = re.findall(rb'[\x20-\x7e]{4,}', blob)
-        interesting = [x for x in strs if any(k in x for k in
-                       (b'dist/face', b'dist/photo', str(target).encode()))]
-        if interesting or encode_varint(target) in blob:
-            found = True
-            print(f"    [+] type=0x{typ:02x} len={len(blob)} profile data!")
-            for x in interesting[:6]:
-                print(f"        {x[:100]}")
+            # strict: real profile data = zstd msg with avatar/name content
+            strs = re.findall(rb'[\x20-\x7e]{4,}', blob)
+            interesting = [x for x in strs if any(k in x for k in
+                           (b'dist/face', b'dist/photo'))]
+            name_hit = re.search(rb'[A-Za-z][A-Za-z0-9_~]{2,20}', blob)
+            if interesting:
+                found = True
+                print(f"    [+] type=0x{typ:02x} len={len(blob)} profile data!")
+                for x in interesting[:6]:
+                    print(f"        {x[:100]}")
     if not found:
-        print("[-] no profile data found in response - request may have been rejected")
+        print("[-] no profile data in response.")
+        print(f"    raw response ({len(resp)}B): {resp[:120].hex()}")
+        print("    (ID may not exist, or server rejected the request)")
     else:
         print("[+] SUCCESS: profile data retrieved via replay!")
 
