@@ -1,51 +1,11 @@
 #!/usr/bin/env python3
 """Batch profile lookup via network replay - basic profile data (~7s per ID).
-Usage: python3 mlbb_batch.py <id1> <id2> ... 
+Usage: python3 mlbb_batch.py <id1> <id2> ...
    or: python3 mlbb_batch.py ids.txt (one ID per line)
 """
 import socket, struct, json, sys, re, time
-
-def encode_varint(n):
-    out = b''
-    while True:
-        b = n & 0x7f; n >>= 7
-        out += bytes([b | (0x80 if n else 0)])
-        if not n: break
-    return out
-
-def frame_msgs(blob):
-    msgs = []
-    off = 0
-    while off + 4 <= len(blob):
-        typ = blob[off]
-        ln = struct.unpack('>I', b'\x00' + blob[off+1:off+4])[0]
-        if ln < 4 or off + ln > len(blob): break
-        msgs.append((typ, blob[off+4:off+ln]))
-        off += ln
-    return msgs
-
-def recv_all(s, timeout=8):
-    s.settimeout(timeout)
-    chunks = []
-    start = time.time()
-    while time.time() - start < timeout:
-        try:
-            d = s.recv(65536)
-            if not d: break
-            chunks.append(d)
-            time.sleep(0.3)
-            s.settimeout(0.5)
-        except socket.timeout:
-            break
-        except Exception:
-            break
-    return b''.join(chunks)
-
-def do_handshake(server, port, hs_hex):
-    s = socket.create_connection((server, port), timeout=15)
-    s.sendall(bytes.fromhex(hs_hex))
-    resp = recv_all(s, timeout=8)
-    return s, resp
+sys.path.insert(0, '.')
+from mlbb_replay_v2 import encode_varint, frame_msgs, recv_all, do_handshake
 
 def build_search_request(target_id, template_hex):
     raw = bytes.fromhex(template_hex)
@@ -56,7 +16,6 @@ def build_search_request(target_id, template_hex):
     inner = bytearray(body[inner_start:inner_start+old_len])
     trailer = bytes(body[inner_start+old_len:])
     tid = encode_varint(target_id)
-    # find 70 40 00 01 <old_id> pattern
     j = inner.find(b'\x70\x40\x00\x01')
     assert j >= 0
     k = j + 4
@@ -94,10 +53,16 @@ def build_visit_request(target_id, zone, template_hex):
     total = 4 + len(new_body)
     return bytes([0x00, (total >> 16) & 0xff, (total >> 8) & 0xff, total & 0xff]) + new_body
 
+def decode_varint(buf, pos):
+    v = 0; sh = 0
+    while pos < len(buf):
+        b = buf[pos]; v |= (b & 0x7f) << sh; sh += 7; pos += 1
+        if not (b & 0x80): break
+    return v, pos
+
 def lookup_one(target_id, data, dctx):
-    """Returns (zone, name, bio, avatar) or (None, error)."""
+    """Returns (result_dict, None) or (None, error_str)."""
     try:
-        # Search (fresh conn)
         s, hresp = do_handshake(data['server'], data['port'], data['handshake'])
         if not hresp:
             return None, "handshake failed"
@@ -122,7 +87,6 @@ def lookup_one(target_id, data, dctx):
         if not zone:
             return None, "search failed / zone not found"
         time.sleep(0.3)
-        # Visit (fresh conn)
         s, hresp = do_handshake(data['server'], data['port'], data['handshake'])
         if not hresp:
             return None, "handshake failed (visit)"
@@ -130,7 +94,7 @@ def lookup_one(target_id, data, dctx):
         s.sendall(vreq)
         resp = recv_all(s, timeout=10)
         s.close()
-        name, bio, avatar = None, None, None
+        name, avatar = None, None
         for typ, m in frame_msgs(resp):
             if typ != 0x10: continue
             try:
@@ -141,22 +105,13 @@ def lookup_one(target_id, data, dctx):
                 t = x.decode()
                 if 'dist/' in t and not avatar:
                     avatar = t
-                elif t and not name and len(t) < 50 and 'dist/' not in t:
-                    # Heuristic: first short string is name
-                    if not any(c in t for c in ['|', '@', ':']):
+                elif not name and len(t) < 50 and 'dist/' not in t:
+                    if not any(c in t for c in ['|', '@']):
                         name = t
-            # Bio: look for string after name-like pattern
             break
         return {'id': target_id, 'zone': zone, 'name': name, 'avatar': avatar}, None
     except Exception as e:
         return None, str(e)
-
-def decode_varint(buf, pos):
-    v = 0; sh = 0
-    while pos < len(buf):
-        b = buf[pos]; v |= (b & 0x7f) << sh; sh += 7; pos += 1
-        if not (b & 0x80): break
-    return v, pos
 
 def main():
     if len(sys.argv) < 2:
@@ -192,10 +147,11 @@ def main():
             print(f"[{i+1}/{len(ids)}] {tid}: {res['name']} (zone {res['zone']}) [{dt:.1f}s]")
             results.append(res)
         if i < len(ids) - 1:
-            time.sleep(1)  # rate limit
+            time.sleep(1)
 
     total = time.time() - t0
-    print(f"\nDone: {len([r for r in results if 'error' not in r])}/{len(ids)} OK in {total:.1f}s")
+    ok = len([r for r in results if 'error' not in r])
+    print(f"\nDone: {ok}/{len(ids)} OK in {total:.1f}s")
     json.dump(results, open('batch_results.json', 'w'), indent=2)
     print("Saved to batch_results.json")
 
