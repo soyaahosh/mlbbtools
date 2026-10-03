@@ -68,7 +68,7 @@ def lookup_one(target_id, data, dctx):
             return None, "handshake failed"
         sreq = build_search_request(target_id, data['search_request'])
         s.sendall(sreq)
-        resp = recv_all(s, timeout=8)
+        resp = recv_all(s, timeout=4)
         s.close()
         zone = None
         for typ, m in frame_msgs(resp):
@@ -92,7 +92,7 @@ def lookup_one(target_id, data, dctx):
             return None, "handshake failed (visit)"
         vreq = build_visit_request(target_id, zone, data['profile_request'])
         s.sendall(vreq)
-        resp = recv_all(s, timeout=10)
+        resp = recv_all(s, timeout=5)
         s.close()
         name, avatar = None, None
         for typ, m in frame_msgs(resp):
